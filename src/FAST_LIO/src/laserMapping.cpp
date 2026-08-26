@@ -57,6 +57,7 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <filesystem>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -513,12 +514,10 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
     /**************** save map ****************/
     /* 1. make sure you have enough memories
     /* 2. noted that pcd save will influence the real-time performences **/
-    /*
     if (pcd_save_en)
     {
         int size = feats_undistort->points.size();
-        PointCloudXYZI::Ptr laserCloudWorld( \
-                        new PointCloudXYZI(size, 1));
+        PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
 
         for (int i = 0; i < size; i++)
         {
@@ -532,6 +531,7 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
         if (pcl_wait_save->size() > 0 && pcd_save_interval > 0  && scan_wait_num >= pcd_save_interval)
         {
             pcd_index ++;
+            std::filesystem::create_directories(string(ROOT_DIR) + "PCD");
             string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
             pcl::PCDWriter pcd_writer;
             cout << "current scan saved to /PCD/" << all_points_dir << endl;
@@ -540,7 +540,6 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
             scan_wait_num = 0;
         }
     }
-    */
 }
 
 void publish_frame_body(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body)
@@ -1175,11 +1174,15 @@ int main(int argc, char** argv)
     /* 2. pcd save will largely influence the real-time performences **/
     if (pcl_wait_save->size() > 0 && pcd_save_en)
     {
+        std::filesystem::create_directories(string(ROOT_DIR) + "PCD");
         string file_name = string("scans.pcd");
         string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
         pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name<<endl;
+        cout << "\n========================================" << endl;
+        cout << "Saving global map (" << pcl_wait_save->size() << " points) to: " << all_points_dir << endl;
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        cout << "Map saved successfully to " << all_points_dir << endl;
+        cout << "========================================\n" << endl;
     }
 
     if (runtime_pos_log)
