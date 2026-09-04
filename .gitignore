@@ -35,6 +35,11 @@ imu.txt
 *.laz
 src/FAST_LIO/PCD/*.pcd
 
+# 2D Occupancy Grid Maps (Nav2)
+map.pgm
+map.yaml
+*.pgm
+
 # General log files
 *.log
 
