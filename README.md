@@ -192,7 +192,7 @@ Provide the path to the map and a rough initial pose estimate `(x, y, z, roll, p
 cd ~/ros2_livox_ws
 source install/setup.bash
 
-ros2 service call /relocalize interface/srv/Relocalize "{
+ros2 service call /localizer/relocalize interface/srv/Relocalize "{
   pcd_path: '/home/eepy/ros2_livox_ws/src/FAST_LIO/PCD/scans.pcd',
   x: 0.0,
   y: 0.0,
@@ -211,7 +211,7 @@ interface.srv.Relocalize_Response(success=True, message='relocalize success')
 #### Step 4: Verify Relocalization Convergence
 Query the relocalization check service:
 ```bash
-ros2 service call /relocalize_check interface/srv/IsValid "{code: 0}"
+ros2 service call /localizer/relocalize_check interface/srv/IsValid "{code: 0}"
 ```
 *Expected response when converged:*
 ```text
@@ -289,10 +289,10 @@ The workspace adheres to ROS standard coordinate conventions (REP-105):
 | Service Name | Service Type | Package | Description |
 | :--- | :--- | :--- | :--- |
 | `/map_save` | `std_srvs/srv/Trigger` | `fast_lio` | Manually triggers PCD map save during mapping |
-| `/relocalize` | `interface/srv/Relocalize` | `localizer` | Loads the specified PCD map and sets initial pose guess |
-| `/relocalize_check` | `interface/srv/IsValid` | `localizer` | Returns whether ICP has successfully aligned to the map |
+| `/localizer/relocalize` | `interface/srv/Relocalize` | `localizer` | Loads the specified PCD map and sets initial pose guess |
+| `/localizer/relocalize_check` | `interface/srv/IsValid` | `localizer` | Returns whether ICP has successfully aligned to the map |
 
-#### Service Payload Reference (`/relocalize`):
+#### Service Payload Reference (`/localizer/relocalize`):
 ```text
 string pcd_path    # Absolute path to .pcd map file
 float32 x          # Initial estimate X (meters)
