@@ -17,6 +17,8 @@
 #include "interface/srv/relocalize.hpp"
 #include "interface/srv/is_valid.hpp"
 #include <yaml-cpp/yaml.h>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -47,6 +49,15 @@ struct NodeState
     M4F initial_guess = M4F::Identity();
 };
 
+struct Waypoint
+{
+    std::string name;
+    double x;
+    double y;
+    double z;
+    double yaw;
+};
+
 class LocalizerNode : public rclcpp::Node
 {
 public:
@@ -71,7 +82,9 @@ public:
 
         m_map_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("map_cloud", 10);
 
-        m_timer = this->create_wall_timer(10ms, std::bind(&LocalizerNode::timerCB, this));
+	m_waypoints_pub = this->create_publisher<visualization_msgs::msg::MarkerArray>("waypoints", 10);
+
+	m_timer = this->create_wall_timer(10ms, std::bind(&LocalizerNode::timerCB, this));
     }
 
     void loadParameters()
@@ -160,7 +173,8 @@ public:
             }
         }
         sendBroadCastTF(current_time);
-        publishMapCloud(current_time);
+	publishMapCloud(current_time);
+	publishWaypoints(current_time);
     }
     void syncCB(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &cloud_msg, const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg)
     {
@@ -230,6 +244,9 @@ public:
             response->message = "load map failed";
             return;
         }
+        
+        loadWaypoints(pcd_path);
+        
         {
             std::lock_guard<std::mutex>(m_state.message_mutex);
             m_state.initial_guess.setIdentity();
@@ -266,6 +283,139 @@ public:
         map_cloud_msg.header.stamp = time;
         m_map_cloud_pub->publish(map_cloud_msg);
     }
+    
+    void loadWaypoints(const std::string &pcd_path)
+{
+    m_waypoints.clear();
+
+    std::filesystem::path path(pcd_path);
+
+    // scans.pcd -> scans_waypoints.yaml
+    std::filesystem::path yaml_path =
+        path.parent_path() /
+        (path.stem().string() + "_waypoints.yaml");
+
+    if (!std::filesystem::exists(yaml_path))
+    {
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Waypoint file not found: %s",
+            yaml_path.string().c_str());
+        return;
+    }
+
+    try
+    {
+        YAML::Node root = YAML::LoadFile(yaml_path.string());
+
+        if (!root["waypoints"])
+        {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "No 'waypoints' entry found in %s",
+                yaml_path.string().c_str());
+            return;
+        }
+
+        for (const auto &node : root["waypoints"])
+        {
+            Waypoint wp;
+            wp.name = node["name"].as<std::string>();
+            wp.x = node["x"].as<double>();
+            wp.y = node["y"].as<double>();
+            wp.z = node["z"].as<double>();
+            wp.yaw = node["yaw"].as<double>();
+
+            m_waypoints.push_back(wp);
+        }
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Loaded %zu waypoints from %s",
+            m_waypoints.size(),
+            yaml_path.string().c_str());
+    }
+    catch (const YAML::Exception &e)
+    {
+        RCLCPP_ERROR(
+            this->get_logger(),
+            "Failed to load waypoints: %s",
+            e.what());
+    }
+}
+
+void publishWaypoints(const builtin_interfaces::msg::Time &time)
+{
+    if (m_waypoints.empty())
+        return;
+
+    visualization_msgs::msg::MarkerArray markers;
+
+    int id = 0;
+
+    for (const auto &wp : m_waypoints)
+    {
+        // Visible sphere
+        visualization_msgs::msg::Marker marker;
+
+        marker.header.frame_id = m_config.map_frame;
+        marker.header.stamp = time;
+        marker.ns = "waypoints";
+        marker.id = id++;
+        marker.type = visualization_msgs::msg::Marker::SPHERE;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+
+        marker.pose.position.x = wp.x;
+        marker.pose.position.y = wp.y;
+        marker.pose.position.z = wp.z;
+
+        marker.pose.orientation.w = 1.0;
+
+        marker.scale.x = 0.30;
+        marker.scale.y = 0.30;
+        marker.scale.z = 0.30;
+
+        marker.color.r = 0.0;
+        marker.color.g = 1.0;
+        marker.color.b = 0.0;
+        marker.color.a = 1.0;
+
+        marker.lifetime = rclcpp::Duration::from_seconds(0);
+
+        markers.markers.push_back(marker);
+
+        // Text label
+        visualization_msgs::msg::Marker text;
+
+        text.header.frame_id = m_config.map_frame;
+        text.header.stamp = time;
+        text.ns = "waypoint_names";
+        text.id = id++;
+        text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        text.action = visualization_msgs::msg::Marker::ADD;
+
+        text.pose.position.x = wp.x;
+        text.pose.position.y = wp.y;
+        text.pose.position.z = wp.z + 0.35;
+
+        text.pose.orientation.w = 1.0;
+
+        text.scale.z = 0.25;
+
+        text.color.r = 1.0;
+        text.color.g = 1.0;
+        text.color.b = 1.0;
+        text.color.a = 1.0;
+
+        text.text = wp.name;
+
+        text.lifetime = rclcpp::Duration::from_seconds(0);
+
+        markers.markers.push_back(text);
+    }
+
+    m_waypoints_pub->publish(markers);
+}
 
 private:
     NodeConfig m_config;
@@ -281,6 +431,8 @@ private:
     rclcpp::Service<interface::srv::Relocalize>::SharedPtr m_reloc_srv;
     rclcpp::Service<interface::srv::IsValid>::SharedPtr m_reloc_check_srv;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_map_cloud_pub;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr m_waypoints_pub;
+    std::vector<Waypoint> m_waypoints;
 };
 int main(int argc, char **argv)
 {
