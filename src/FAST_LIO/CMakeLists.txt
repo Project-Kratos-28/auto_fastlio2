@@ -56,6 +56,7 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(interface REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -70,6 +71,7 @@ set(dependencies
   sensor_msgs
   std_msgs
   std_srvs
+  interface
   visualization_msgs
   pcl_ros
   pcl_conversions

@@ -1,0 +1,11 @@
+waypoints:
+  - name: "test_waypoint_1"
+    x: -0.0150321
+    y: -0.0145855
+    z: 0.0174731
+    yaw: -0.144417
+  - name: "test_waypoint_2"
+    x: -3.34422
+    y: 19.8551
+    z: 1.56825
+    yaw: -18.0547
