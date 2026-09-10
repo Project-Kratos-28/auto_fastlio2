@@ -1,423 +1,394 @@
-# Livox Mid-360 LiDAR SLAM, Map Conversion, and Relocalization Workspace
+# Livox MID-360 GLIM SLAM Workspace
 
-A ROS 2 Humble workspace for the Livox Mid-360 LiDAR featuring:
-* **High-Frequency LiDAR-Inertial Odometry (LIO)** and dense 3D point cloud mapping with PCD export.
-* **3D-to-2D Occupancy Grid Conversion (`pcd2pgm`)** to generate standard `map.pgm` and `map.yaml` maps for ROS 2 Nav2 navigation.
-* **Real-Time 3D Relocalization** against pre-built global maps using two-stage coarse-to-fine Iterative Closest Point (ICP).
+ROS 2 Humble workspace for real-time LiDAR-inertial odometry and 3D simultaneous
+localization and mapping (SLAM) with a Livox MID-360 and GLIM.
 
----
+The active pipeline is:
 
-## 1. Getting Started and Workspace Setup
-
-This section outlines system requirements, external dependencies, network configuration, and building instructions for setting up the workspace on a clean system.
-
-### 1.1 System Requirements
-
-* **Operating System**: Ubuntu 22.04 LTS (Jammy Jellyfish)
-* **ROS Distribution**: ROS 2 Humble Hawksbill (Desktop or Base)
-* **LiDAR Sensor**: Livox Mid-360 with integrated 6-axis IMU
-
-### 1.2 Prerequisites and Dependencies
-
-Install core build tools, Point Cloud Library (PCL), Eigen, and standard ROS 2 Humble dependencies:
-
-```bash
-sudo apt update && sudo apt install -y \
-    build-essential \
-    cmake \
-    git \
-    libpcl-dev \
-    libeigen3-dev \
-    libyaml-cpp-dev \
-    ros-humble-pcl-conversions \
-    ros-humble-pcl-ros \
-    ros-humble-tf2-ros \
-    ros-humble-tf2-eigen \
-    ros-humble-sensor-msgs \
-    ros-humble-nav-msgs \
-    ros-humble-geometry-msgs \
-    ros-humble-message-filters \
-    ros-humble-nav2-map-server \
-    ros-humble-navigation2 \
-    ros-humble-nav2-bringup \
-    pcl-tools
+```text
+Livox MID-360 -> livox_ros_driver2 -> PointCloud2 + IMU -> GLIM -> odometry + 3D map
 ```
 
-#### Install Livox-SDK2
-The Livox ROS 2 driver requires `Livox-SDK2` installed system-wide:
+GLIM performs continuous pose estimation while it builds and optimizes the map. This
+repository does not provide autonomous path planning, waypoint following, or
+localization against a previously saved map. Loading a saved GLIM dump in the offline
+viewer is for visualization, editing, and export; it does not start live localization.
+
+## 1. Getting started and workspace setup
+
+### 1.1 Supported platform
+
+- Ubuntu 22.04 LTS
+- ROS 2 Humble
+- Livox MID-360 with its integrated IMU
+- Ethernet connection to the LiDAR
+- Optional NVIDIA GPU and a GLIM-supported CUDA toolkit
+
+Commands below determine the repository location dynamically. They do not depend on a
+particular username, home directory, Ethernet interface name, or clone location.
+
+### 1.2 Install ROS 2 Humble and build tools
+
+If ROS 2 Humble is not already installed, configure the official ROS 2 apt repository.
+These commands follow the maintained
+[ROS 2 Ubuntu installation guide](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html):
 
 ```bash
-cd /tmp
-git clone https://github.com/Livox-SDK/Livox-SDK2.git
-cd Livox-SDK2
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
-sudo make install
+sudo apt update
+sudo apt install -y software-properties-common curl
+sudo add-apt-repository universe
+
+ROS_APT_SOURCE_VERSION="$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
+  | grep -F 'tag_name' | awk -F'"' '{print $4}')"
+ROS_UBUNTU_CODENAME="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-${VERSION_CODENAME}}")"
+curl -L -o /tmp/ros2-apt-source.deb \
+  "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.${ROS_UBUNTU_CODENAME}_all.deb"
+sudo dpkg -i /tmp/ros2-apt-source.deb
+
+sudo apt update
+sudo apt upgrade
+sudo apt install -y \
+  ros-humble-desktop \
+  ros-dev-tools \
+  python3-colcon-common-extensions \
+  python3-rosdep \
+  build-essential \
+  cmake \
+  git \
+  libpcl-dev \
+  libeigen3-dev \
+  pcl-tools
+```
+
+Initialize `rosdep` once per computer:
+
+```bash
+sudo rosdep init
+rosdep update
+```
+
+If `rosdep` was initialized previously, the first command may report that its sources
+file already exists; continue with `rosdep update`.
+
+### 1.3 Install Livox-SDK2
+
+`livox_ros_driver2` requires Livox-SDK2 to be installed system-wide:
+
+```bash
+DEPENDENCY_DIR="$(mktemp -d)"
+git clone https://github.com/Livox-SDK/Livox-SDK2.git "$DEPENDENCY_DIR/Livox-SDK2"
+cmake -S "$DEPENDENCY_DIR/Livox-SDK2" -B "$DEPENDENCY_DIR/Livox-SDK2/build"
+cmake --build "$DEPENDENCY_DIR/Livox-SDK2/build" --parallel
+sudo cmake --install "$DEPENDENCY_DIR/Livox-SDK2/build"
 sudo ldconfig
 ```
 
-#### Install Sophus
-The `fastlio2` odometry package requires the `Sophus` Lie group library:
+### 1.4 Install GLIM
+
+Add the official GLIM Ubuntu 22.04 package repository:
 
 ```bash
-cd /tmp
-git clone https://github.com/strasdat/Sophus.git
-cd Sophus
-git checkout 1.22.10
-mkdir build && cd build
-cmake .. -DSOPHUS_USE_BASIC_LOGGING=ON
-make -j$(nproc)
-sudo make install
+curl -s --compressed "https://koide3.github.io/ppa/ubuntu2204/KEY.gpg" \
+  | gpg --dearmor \
+  | sudo tee /etc/apt/trusted.gpg.d/koide3_ppa.gpg >/dev/null
+
+echo "deb [signed-by=/etc/apt/trusted.gpg.d/koide3_ppa.gpg] https://koide3.github.io/ppa/ubuntu2204 ./" \
+  | sudo tee /etc/apt/sources.list.d/koide3_ppa.list >/dev/null
+
+sudo apt update
+sudo apt install -y libiridescence-dev libboost-all-dev libglfw3-dev libmetis-dev
+```
+
+Choose exactly one GLIM installation.
+
+CPU-only:
+
+```bash
+sudo apt install -y libgtsam-points-dev ros-humble-glim-ros
 sudo ldconfig
 ```
 
-### 1.3 Network Configuration (Livox Mid-360)
+NVIDIA GPU:
 
-The Livox Mid-360 communicates over Ethernet via UDP. By default, it sends data to host IP `192.168.1.50` and listens at static IP `192.168.1.125`.
+1. Install a GLIM-supported CUDA toolkit using the
+   [NVIDIA CUDA installation guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/).
+2. Confirm the installed toolkit version:
 
-#### Configure Host Network Interface
-Set a static IP on the Ethernet interface connected to the LiDAR:
-
-* **IP Address**: `192.168.1.50`
-* **Subnet Mask**: `255.255.255.0` (`/24`)
-* **Gateway**: `192.168.1.1`
-
-Using NetworkManager CLI (`nmcli`):
-```bash
-# Identify your Ethernet interface name (e.g., eth0, enp3s0)
-ip link
-
-# Configure static IP
-sudo nmcli connection modify <INTERFACE_NAME> ipv4.addresses 192.168.1.50/24 ipv4.method manual
-sudo nmcli connection up <INTERFACE_NAME>
-```
-
-#### Verify Sensor Connectivity
-```bash
-ping 192.168.1.125
-```
-If your LiDAR has a custom IP address or broadcast code, update `src/livox_ros_driver2/config/MID360_config.json`.
-
-### 1.4 Cloning and Building the Workspace
-
-Clone the repository and build all packages using `colcon`:
-
-```bash
-# Clone the repository
-git clone https://github.com/Project-Kratos-28/auto_fastlio2.git ~/ros2_livox_ws
-cd ~/ros2_livox_ws
-
-# Source ROS 2 Humble
-source /opt/ros/humble/setup.bash
-
-# Build the entire workspace
-colcon build --symlink-install --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble
-
-# Source workspace overlay
-source install/setup.bash
-```
-
-To reload workspace environment variables automatically in new terminal sessions:
-```bash
-echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
-echo "source ~/ros2_livox_ws/install/setup.bash" >> ~/.bashrc
-source ~/.bashrc
-```
-
----
-
-## 2. Complete Operation Workflows
-
-The workspace supports an end-to-end pipeline:
-1. **3D Mapping**: Scan the environment and export a dense `.pcd` point cloud.
-2. **2D Map Conversion (`pcd2pgm`)**: Slice and rasterize the 3D map into a 2D occupancy grid (`map.pgm` + `map.yaml`) for Nav2.
-3. **3D Relocalization**: Ingest live scans and relocalize against the global map with ICP (`map -> lidar` TF).
-4. **Autonomous Navigation**: Deploy the map with Nav2 for path planning and obstacle avoidance.
-
----
-
-### 2.1 Generating and Saving a 3D PCD Map
-
-#### Step 1: Launch the Livox LiDAR Driver
-Terminal 1:
-```bash
-cd ~/ros2_livox_ws
-source install/setup.bash
-ros2 launch livox_ros_driver2 msg_MID360_launch.py
-```
-
-#### Step 2: Launch FAST-LIO Mapping and Visualizer
-Terminal 2:
-```bash
-cd ~/ros2_livox_ws
-source install/setup.bash
-ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml
-```
-Move the sensor smoothly through the target area. RViz will display real-time odometry and registered point cloud accumulation.
-
-#### Step 3: Save the Global Map
-Map points are accumulated during the run. You can save the map in two ways:
-
-* **Automatic Save on Shutdown**:
-  Terminate the mapping process in Terminal 2 with `Ctrl + C`. The node automatically saves the full-resolution point cloud to:
-  ```text
-  src/FAST_LIO/PCD/scans.pcd
-  ```
-* **Manual Save Trigger via Service**:
-  While mapping is still active, run in another terminal:
-  ```bash
-  ros2 service call /map_save std_srvs/srv/Trigger "{}"
-  ```
-
-#### Step 4: Verify the Saved PCD Map
-Inspect the generated point cloud using `pcl_viewer`:
-```bash
-pcl_viewer src/FAST_LIO/PCD/scans.pcd
-```
-*(Tip: Press keys `1`, `2`, `3`, `4`, or `5` inside `pcl_viewer` to switch color rendering modes: Random, X, Y, Z, or Intensity).*
-
----
-
-### 2.2 Converting 3D PCD to 2D Occupancy Grid (`.pgm` + `.yaml`) for Nav2
-
-ROS 2 Nav2 requires a 2D grid map where pixels represent free space (white, `254`) and obstacles (black, `0`). The `pcd2pgm` package extracts vertical obstacles from `scans.pcd` while filtering out the floor and ceiling.
-
-#### Step 1: Configure Conversion Parameters
-Open `src/pcd2pgm/config/pcd2pgm.yaml` to configure thresholds:
-```yaml
-pcd2pgm:
-  ros__parameters:
-    # Path to input PCD file
-    pcd_file: "/home/eepy/ros2_livox_ws/src/FAST_LIO/PCD/scans.pcd"
-    
-    # 2D Grid map resolution in meters per pixel (0.05 = 5cm/pixel)
-    map_resolution: 0.05
-    
-    # Output OccupancyGrid topic name
-    map_topic_name: "map"
-    
-    # Rigid coordinate transform [x, y, z, roll, pitch, yaw] from odom to lidar
-    odom_to_lidar_odom: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
-    # Z-axis passthrough filter thresholds:
-    # IMPORTANT: flag_pass_through: false keeps points INSIDE [thre_z_min, thre_z_max]
-    flag_pass_through: false
-    thre_z_min: 0.2     # Height above ground where obstacles start (0.15m - 0.2m excludes floor)
-    thre_z_max: 1.8     # Max height of obstacles (cuts off ceiling and overhead pipes)
-    
-    # Radius Outlier Removal (cleans LiDAR dust and floating noise)
-    thre_radius: 0.5
-    thres_point_count: 5
-```
-
-> [!TIP]
-> **Why `thre_z_min` should be 0.15–0.20m instead of 0.0m:**  
-> If `thre_z_min` is set to `0.0`, all ground points hit by the LiDAR will be treated as obstacles, turning the entire room black and blocking path planning. Setting `thre_z_min: 0.2` cuts out the floor while preserving full vertical walls, doors, table legs, and columns.
-
-#### Step 2: Run the `pcd2pgm` Converter
-Terminal 1:
-```bash
-cd ~/ros2_livox_ws
-source install/setup.bash
-ros2 launch pcd2pgm pcd2pgm.launch.py
-```
-This node filters `scans.pcd`, publishes the 2D grid to `/map`, and opens RViz2 for inspection.
-
-#### Step 3: Save the 2D Map Using Nav2 Map Server
-Terminal 2:
-```bash
-cd ~/ros2_livox_ws
-source /opt/ros/humble/setup.bash
-ros2 run nav2_map_server map_saver_cli -f ~/ros2_livox_ws/map
-```
-This will generate:
-* `map.pgm`: 2D occupancy grid image.
-* `map.yaml`: Map metadata (resolution, origin, occupancy thresholds) required by Nav2.
-
-*(Note: `map.pgm` and `map.yaml` are ignored by git in this repository to keep commits lightweight).*
-
----
-
-### 2.3 Relocalizing on the Pre-Built Map
-
-Once `scans.pcd` is available, run the real-time relocalization pipeline to track robot position against the global map.
-
-#### Step 1: Launch the LiDAR Driver
-Terminal 1:
-```bash
-cd ~/ros2_livox_ws
-source install/setup.bash
-ros2 launch livox_ros_driver2 msg_MID360_launch.py
-```
-
-#### Step 2: Launch the Localizer and Odometry Stack
-Terminal 2:
-```bash
-cd ~/ros2_livox_ws
-source install/setup.bash
-ros2 launch localizer localizer_launch.py
-```
-This launch file starts:
-* `lio_node` (`fastlio2`): High-frequency LiDAR-inertial state estimation.
-* `localizer_node` (`localizer`): Coarse-to-fine ICP matching engine.
-* `rviz2`: Visualizer preconfigured with localizer views and map frames.
-
-#### Step 3: Trigger Relocalization Service
-Provide the path to the map and a rough initial pose estimate `(x, y, z, roll, pitch, yaw)`:
-
-```bash
-cd ~/ros2_livox_ws
-source install/setup.bash
-
-ros2 service call /localizer/relocalize interface/srv/Relocalize "{
-  pcd_path: '/home/eepy/ros2_livox_ws/src/FAST_LIO/PCD/scans.pcd',
-  x: 0.0,
-  y: 0.0,
-  z: 0.0,
-  roll: 0.0,
-  pitch: 0.0,
-  yaw: 0.0
-}"
-```
-*Expected service response:*
-```text
-response:
-interface.srv.Relocalize_Response(success=True, message='relocalize success')
-```
-
-#### Step 4: Verify Relocalization Convergence
-Query the relocalization check service:
-```bash
-ros2 service call /localizer/relocalize_check interface/srv/IsValid "{code: 0}"
-```
-*Expected response when converged:*
-```text
-response:
-interface.srv.IsValid_Response(valid=True)
-```
-
-#### Step 5: Verify the Global TF Transform
-Confirm the global coordinate transform is active and being broadcasted:
-```bash
-ros2 run tf2_ros tf2_echo map lidar
-```
-
----
-
-### 2.4 Nav2 Navigation with the Generated Map
-
-To test the generated 2D map with Nav2:
-
-1. Launch Nav2 bringup with your generated map:
    ```bash
-   ros2 launch nav2_bringup bringup_launch.py map:=/home/eepy/ros2_livox_ws/map.yaml use_sim_time:=False
+   nvcc --version
    ```
-2. Open RViz2 configured with the Nav2 display plugin.
-3. Use **"2D Pose Estimate"** to set the initial pose and **"Nav2 Goal"** to command navigation targets.
 
----
+3. Install GLIM packages matching that CUDA version. For example, for CUDA 13.1:
 
-## 3. Technical Details and Architecture
+   ```bash
+   sudo apt install -y \
+     libgtsam-points-cuda13.1-dev \
+     ros-humble-glim-ros-cuda13.1
+   sudo ldconfig
+   ```
 
-### 3.1 Workspace Package Overview
+Replace `cuda13.1` in both package names with the available suffix matching the local
+toolkit, such as `cuda12.2` or `cuda12.6`. See the
+[official GLIM installation page](https://koide3.github.io/glim/installation.html) for
+the currently published combinations.
 
-| Package Directory | ROS 2 Package Name | Description |
-| :--- | :--- | :--- |
-| `src/livox_ros_driver2` | `livox_ros_driver2` | Hardware communication driver for Livox Mid-360. Streams raw LiDAR packets and IMU data. |
-| `src/FAST_LIO` | `fast_lio` | HKU-MARS FAST-LIO direct LiDAR-inertial odometry and mapping node with PCD auto-save support. |
-| `src/FASTLIO2_ROS2/fastlio2` | `fastlio2` | Modular C++ ROS 2 reimplementation of FAST-LIO2, providing odometry and body point clouds. |
-| `src/FASTLIO2_ROS2/localizer` | `localizer` | Two-stage (rough + refine) ICP relocalization against a static PCD map; broadcasts `map -> lidar` TF. |
-| `src/FASTLIO2_ROS2/interface` | `interface` | Service definitions for relocalization queries and map operations (`Relocalize`, `IsValid`, `SaveMaps`). |
-| `src/pcd2pgm` | `pcd2pgm` | Converts 3D `.pcd` maps into 2D Occupancy Grid (`.pgm` + `.yaml`) for Nav2 costmaps. |
+Verify the installation:
 
-### 3.2 Coordinate Frames and TF Architecture
-
-The workspace adheres to ROS standard coordinate conventions (REP-105):
-
-```text
-[map] (Global Map Frame from PCD)
-  │
-  └── (Published by localizer_node via ICP alignment)
-  │
-[lidar] (Local Odometry Frame from fastlio2)
-  │
-  └── (Published by fastlio2 / lio_node)
-  │
-[body] (Sensor IMU / Body Frame)
+```bash
+source /opt/ros/humble/setup.bash
+ros2 pkg executables glim_ros
 ```
 
-* **`map`**: Fixed global coordinate system defined by the pre-recorded `scans.pcd`.
-* **`lidar`**: Odometry frame relative to the initial boot position of the sensor.
-* **`body`**: Moving sensor frame centered at the Livox Mid-360 IMU origin.
+The output should include `glim_rosnode`, `offline_viewer`, and `map_editor`.
 
-### 3.3 Key ROS 2 Topics
+### 1.5 Select CPU or GPU configuration
 
-#### Sensor Driver (`livox_ros_driver2`)
-| Topic | Message Type | Description |
-| :--- | :--- | :--- |
-| `/livox/lidar` | `livox_ros_driver2/msg/CustomMsg` | Raw Livox LiDAR point packets with point-level timestamps |
-| `/livox/imu` | `sensor_msgs/msg/Imu` | Mid-360 internal IMU readings at 200 Hz |
+Set these entries under `global` in `glim/glim_config/config.json`.
 
-#### FAST-LIO Mapping (`fast_lio`)
-| Topic | Message Type | Description |
-| :--- | :--- | :--- |
-| `/Odometry` | `nav_msgs/msg/Odometry` | Real-time estimated LiDAR pose and velocity |
-| `/path` | `nav_msgs/msg/Path` | Sensor trajectory path |
-| `/cloud_registered` | `sensor_msgs/msg/PointCloud2` | Undistorted points registered in world frame (`camera_init`) |
-| `/cloud_registered_body` | `sensor_msgs/msg/PointCloud2` | Undistorted scan points in sensor body frame |
-| `/Laser_map` | `sensor_msgs/msg/PointCloud2` | Incremental global map from ikd-Tree |
+| Setting | CPU | NVIDIA GPU |
+|---|---|---|
+| `config_odometry` | `config_odometry_cpu.json` | `config_odometry_gpu.json` |
+| `config_sub_mapping` | `config_sub_mapping_passthrough.json` | `config_sub_mapping_gpu.json` |
+| `config_global_mapping` | `config_global_mapping_pose_graph.json` | `config_global_mapping_gpu.json` |
 
-#### Map Conversion (`pcd2pgm`)
-| Topic | Message Type | Description |
-| :--- | :--- | :--- |
-| `/map` | `nav_msgs/msg/OccupancyGrid` | 2D occupancy grid published for visualization and saving |
-| `/pcd_cloud` | `sensor_msgs/msg/PointCloud2` | Filtered obstacle point cloud in `map` frame |
+No source rebuild is required after editing these repository-local GLIM JSON files. The
+launch command below passes their directory directly to GLIM.
 
-#### Localization Stack (`fastlio2` + `localizer`)
-| Topic | Message Type | Description |
-| :--- | :--- | :--- |
-| `/fastlio2/lio_odom` | `nav_msgs/msg/Odometry` | Odometry published by `fastlio2` (consumed by localizer) |
-| `/fastlio2/body_cloud` | `sensor_msgs/msg/PointCloud2` | Body-frame point cloud (consumed by localizer) |
-| `/localizer/map_cloud` | `sensor_msgs/msg/PointCloud2` | Downsampled prior map point cloud published in `map` frame |
-| `/tf` | `tf2_msgs/msg/TFMessage` | Broadcasts the rigid transformation from `map` to `lidar` |
+### 1.6 Clone and build the Livox driver
 
-### 3.4 Key ROS 2 Services
+```bash
+git clone https://github.com/Project-Kratos-28/auto_fastlio2.git
+cd auto_fastlio2
+source /opt/ros/humble/setup.bash
 
-| Service Name | Service Type | Package | Description |
-| :--- | :--- | :--- | :--- |
-| `/map_save` | `std_srvs/srv/Trigger` | `fast_lio` | Manually triggers PCD map save during mapping |
-| `/localizer/relocalize` | `interface/srv/Relocalize` | `localizer` | Loads the specified PCD map and sets initial pose guess |
-| `/localizer/relocalize_check` | `interface/srv/IsValid` | `localizer` | Returns whether ICP has successfully aligned to the map |
+colcon build --symlink-install \
+  --packages-select livox_ros_driver2 \
+  --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble
 
-#### Service Payload Reference (`/localizer/relocalize`):
-```text
-string pcd_path    # Absolute path to .pcd map file
-float32 x          # Initial estimate X (meters)
-float32 y          # Initial estimate Y (meters)
-float32 z          # Initial estimate Z (meters)
-float32 roll       # Initial estimate Roll (radians)
-float32 pitch      # Initial estimate Pitch (radians)
-float32 yaw        # Initial estimate Yaw (radians)
----
-bool success       # True if PCD was loaded and initial guess was accepted
-string message     # Status message
+source install/setup.bash
 ```
 
-### 3.5 Configuration Files Guide
+GLIM is installed system-wide and is not built by `colcon` in this workspace.
 
-* **`src/livox_ros_driver2/config/MID360_config.json`**:
-  Defines host IP, LiDAR IP, UDP ports, and lidar type.
-* **`src/FAST_LIO/config/mid360.yaml`**:
-  LiDAR-to-IMU extrinsics (`extrinsic_T`, `extrinsic_R`), blind field filtering (`blind_front_deg`, `blind_back_deg`), and map downsample sizes (`filter_size_surf`, `filter_size_map`).
-* **`src/FASTLIO2_ROS2/fastlio2/config/lio.yaml`**:
-  Parameters for the `fastlio2` odometry node including IMU noise terms, search distances, and extrinsics.
-* **`src/FASTLIO2_ROS2/localizer/config/localizer.yaml`**:
-  ICP resolution and thresholds for relocalization:
-  * `rough_scan_resolution` / `rough_map_resolution`: Voxel leaf sizes for coarse alignment (default `0.25m`).
-  * `rough_score_thresh`: Max allowable ICP distance score for rough pass (default `0.2`).
-  * `refine_scan_resolution` / `refine_map_resolution`: Voxel leaf sizes for fine alignment (default `0.10m`).
-  * `refine_score_thresh`: Max allowable ICP distance score for final alignment (default `0.1`).
-  * `update_hz`: Rate at which localizer executes ICP correction cycles (default `1.0 Hz`).
-* **`src/pcd2pgm/config/pcd2pgm.yaml`**:
-  Occupancy grid conversion settings: resolution (`0.05m`), height boundaries (`thre_z_min`, `thre_z_max`), radius outlier filter (`thre_radius`, `thres_point_count`), and odom-to-lidar transforms.
+### 1.7 Configure the MID-360 network
+
+The checked-in driver configuration expects:
+
+| Device | IPv4 address |
+|---|---|
+| Computer Ethernet adapter | `192.168.1.50/24` |
+| MID-360 | `192.168.1.125` |
+
+Configure the wired adapter with the desktop network settings. No particular network
+connection profile or interface name is required. Confirm the resulting address and
+sensor connectivity:
+
+```bash
+ip -brief address
+ping -c 3 192.168.1.125
+```
+
+If a computer or sensor uses different addresses, update all host address fields and
+the sensor `ip` field in `src/livox_ros_driver2/config/MID360_config.json` before
+building the driver again.
+
+## 2. Create a map with GLIM
+
+Use three terminals. In every terminal, change to the cloned repository first; the
+commands do not assume where it was cloned.
+
+### 2.1 Start the MID-360 driver
+
+Terminal 1:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch livox_ros_driver2 rviz_MID360_launch.py
+```
+
+Use `rviz_MID360_launch.py`, not `msg_MID360_launch.py`. GLIM consumes
+`sensor_msgs/msg/PointCloud2`; the `msg_` launch publishes Livox `CustomMsg` data.
+
+Before starting GLIM, confirm both streams:
+
+```bash
+ros2 topic hz /livox/lidar
+ros2 topic hz /livox/imu
+```
+
+Expected rates are approximately 10 Hz for LiDAR frames and 200 Hz for IMU data.
+
+### 2.2 Start GLIM SLAM
+
+Stop the rover and keep it completely motionless before running this command.
+
+Terminal 2:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+ros2 run glim_ros glim_rosnode --ros-args \
+  -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
+```
+
+Keep the rover still until GLIM prints `initial IMU state estimation result`, normally
+after two to five seconds. Starting while the rover is moving can produce incorrect
+IMU bias, orientation, and velocity estimates. Move only after initialization has
+completed.
+
+The one-time messages about large point timestamps and Livox `FLOAT64` nanoseconds are
+expected when automatic MID-360 timestamp detection is enabled.
+
+### 2.3 Visualize the live map
+
+Terminal 3:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
+```
+
+The supplied RViz layout already contains the required GLIM displays:
+
+- `/glim_ros/points`: current registered LiDAR scan
+- `/glim_ros/map`: accumulated optimized map; updated approximately every 10 seconds
+- `/glim_ros/odom`: current LiDAR-inertial pose
+
+The driver launch also opens its own RViz window for the raw point cloud. Use the GLIM
+RViz window or GLIM's standard viewer to inspect the accumulated map.
+
+### 2.4 Record the area
+
+After IMU initialization:
+
+1. Drive slowly and smoothly through the area.
+2. Avoid abrupt acceleration, impacts, wheel vibration, and movement of the LiDAR mount.
+3. Keep nearby surfaces in view and overlap adjacent passes.
+4. Revisit previously mapped areas and return near the starting position to provide
+   useful loop-closure opportunities.
+5. Do not disconnect Ethernet or interrupt the IMU stream while mapping.
+
+The current GPU profile retains more detail than the original defaults:
+
+| File | Parameter | Value |
+|---|---|---:|
+| `config_preprocess.json` | `random_downsample_target` | `20000` |
+| `config_sub_mapping_gpu.json` | `submap_downsample_resolution` | `0.05 m` |
+| `config_sub_mapping_gpu.json` | `submap_target_num_points` | `100000` |
+
+This profile uses more GPU memory, system memory, and storage. Reducing the resolution
+below 0.05 m generally increases noise and processing cost substantially.
+
+## 3. Verify live SLAM and localization
+
+GLIM localization is the pose estimate produced during the active SLAM session. Check
+the odometry rate:
+
+```bash
+source /opt/ros/humble/setup.bash
+ros2 topic hz /glim_ros/odom
+```
+
+It should normally be close to the LiDAR frame rate. Inspect one pose:
+
+```bash
+ros2 topic echo /glim_ros/odom --once --field pose.pose
+```
+
+For a physical motion check:
+
+1. Leave the rover stationary and record the pose above.
+2. Move forward by approximately 1-2 m and rotate 30-45 degrees.
+3. Stop the rover and record the pose again.
+4. Confirm that the position and orientation changed consistently with the motion.
+
+Inspect the complete GLIM transform chain:
+
+```bash
+ros2 run tf2_ros tf2_echo map livox_frame
+```
+
+If the driver frame was changed from `livox_frame`, substitute its configured frame ID.
+
+Useful live publishers can be confirmed without modifying RViz:
+
+```bash
+ros2 topic info /glim_ros/points --verbose
+ros2 topic info /glim_ros/map --verbose
+```
+
+## 4. Stop and save a map
+
+In Terminal 2, press `Ctrl+C` once. Wait for GLIM to print `saved` before closing the
+terminal or stopping the driver. GLIM writes the completed graph, submaps,
+configuration, and trajectories to `/tmp/dump`.
+
+`/tmp/dump` is temporary, is replaced by a later GLIM run, and may be removed during a
+reboot. Move it immediately to a permanent directory:
+
+```bash
+cd /path/to/auto_fastlio2
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+MAP_PATH="$REPO_ROOT/maps/glim_$(date +%Y%m%d_%H%M%S)"
+
+mkdir -p "$REPO_ROOT/maps"
+mv /tmp/dump "$MAP_PATH"
+echo "Saved map: $MAP_PATH"
+```
+
+The `maps/` directory is ignored by Git because GLIM dumps can be large. Important dump
+contents include:
+
+- numbered submap directories such as `000000/`
+- `graph.bin` and `values.bin`
+- `odom_imu.txt` and `odom_lidar.txt`: trajectories before global correction
+- `traj_imu.txt` and `traj_lidar.txt`: optimized trajectories after global correction
+- the exact configuration used for the session under `config/`
+
+## 5. Open, edit, and export a saved map
+
+Open a saved dump directly:
+
+```bash
+source /opt/ros/humble/setup.bash
+ros2 run glim_ros offline_viewer --map_path /absolute/path/to/saved/glim_dump
+```
+
+Alternatively, launch `ros2 run glim_ros offline_viewer`, then select
+`File -> Open Map` and choose the dump directory.
+
+The offline viewer can optimize explicit constraints:
+
+- Loop closure: right-click one submap sphere and select `Loop begin`; select another
+  sphere and choose `Loop end`; align the clouds and create the factor.
+- Plane adjustment: right-click a point on a flat surface, choose
+  `Bundle Adjustment (Plane)`, set the selection radius, and create the factor.
+
+Remove unwanted map points with:
+
+```bash
+ros2 run glim_ros map_editor
+```
+
+Export the map from `File -> Save -> Export Points`. GLIM exports PLY. Convert it to PCD
+when another component requires PCD:
+
+```bash
+pcl_ply2pcd /path/to/map.ply /path/to/map.pcd
+```
+
+## 6. Repository layout
+
+| Path | Purpose |
+|---|---|
+| `glim/glim_config/` | MID-360 GLIM CPU and GPU configuration files |
+| `glim/glim_ros.rviz` | Preconfigured live GLIM RViz layout |
+| `glim/README.md` | Compact GLIM command reference and configuration notes |
+| `src/livox_ros_driver2/` | Livox ROS 2 driver source and MID-360 network configuration |
+| `maps/` | Local GLIM dump storage; generated at runtime and ignored by Git |
