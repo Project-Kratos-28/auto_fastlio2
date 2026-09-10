@@ -137,3 +137,10 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# Local build/runtime artefacts and upstream clones (do not commit)
+Livox-SDK2/
+imgui.ini
+frames_*.pdf
+frames_*.gv
+/test_waypoints.yaml
