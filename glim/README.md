@@ -167,6 +167,29 @@ trajectories, and globally optimized trajectories.
 
 ## Open and export a saved map
 
+### Scriptable export (no GUI, recommended for scripting/pipelines)
+
+The installed GLIM (1.2.2) `offline_viewer` has no command-line export flag — that
+was added in a later GLIM version than what the apt PPA ships. `glim_dump_export`
+(in `glim_ext_addon/`) is a small standalone tool that loads a dump the same way
+`offline_viewer` does internally and writes straight to PCD, skipping the PLY step
+entirely. Build it alongside `waypoint_manager` (see
+[`glim_ext_addon/README.md`](glim_ext_addon/README.md)):
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/glim_ext_ws/install/setup.bash
+ros2 run glim_dump_export glim_dump_export /path/to/saved/glim_dump /path/to/map.pcd "$(realpath glim_config)"
+```
+
+This uses the dump's poses exactly as already optimized live during the run (same as
+GUI export with `enable_optimization=false`) — it does not add new loop closures.
+Use the GUI viewer below if you need to manually close a missed loop, run Bundle
+Adjustment, or crop points before exporting.
+
+### Manual export (GUI, for editing before export)
+
+
 CPU/default viewer:
 
 ```bash
@@ -213,3 +236,16 @@ glxinfo -B | grep "OpenGL renderer"
 
 watch -n 1 nvidia-smi
 ```
+
+## Waypoints
+
+`extension_modules` in `glim_config/config_ros.json` already loads
+`libwaypoint_manager.so` — a GLIM extension module that tags waypoints relative to the
+current submap's own origin, so a tagged point automatically rides along with every
+loop-closure correction instead of going stale. Requires a one-time separate build; see
+[`glim_ext_addon/README.md`](glim_ext_addon/README.md) for the build steps and the full
+service list (`/add_waypoint`, `/get_waypoint`, `/save_waypoints`, `/list_waypoints`).
+
+Single-session only for now — see that README's "Known limitations" for why, and see
+[`WAYPOINT_AND_CONE_GUIDE.md`](../WAYPOINT_AND_CONE_GUIDE.md) for how this is meant to
+fit into the broader semantic-landmark / cone system.
