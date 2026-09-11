@@ -1,129 +1,201 @@
-# GLIM SLAM — MID-360
+# GLIM SLAM configuration for Livox MID-360
 
-Config only. GLIM installs from apt — nothing to build, no `colcon build`.
+This directory contains the repository-local GLIM configuration and RViz layout. GLIM
+itself is installed from the official apt repository and is not built by this ROS 2
+workspace.
 
-| Path | |
+For first-time installation, driver building, and network setup, see the root
+[`README.md`](../README.md).
+
+## Contents
+
+| Path | Purpose |
 |---|---|
-| `glim_config/` | 15 JSON configs for our MID-360 (keep all of them together) |
-| `glim_ros.rviz` | RViz layout — the apt package does not ship this |
+| `glim_config/` | GLIM configuration files; keep the complete directory together |
+| `glim_ros.rviz` | RViz layout with the GLIM points, map, odometry, and TF displays |
 
----
+## CPU and GPU selection
 
-## Install
+Set the following entries in `glim_config/config.json`:
 
-```bash
-curl -s --compressed "https://koide3.github.io/ppa/ubuntu2204/KEY.gpg" | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/koide3_ppa.gpg >/dev/null
-```
-
-```bash
-echo "deb [signed-by=/etc/apt/trusted.gpg.d/koide3_ppa.gpg] https://koide3.github.io/ppa/ubuntu2204 ./" | sudo tee /etc/apt/sources.list.d/koide3_ppa.list
-```
-
-```bash
-sudo apt update && sudo apt install -y libiridescence-dev libboost-all-dev libglfw3-dev libmetis-dev libgtsam-points-dev ros-humble-glim-ros && sudo ldconfig
-```
-
-Check:
-
-```bash
-ros2 pkg executables glim_ros
-```
-
----
-
-## CPU vs GPU
-
-The configs here are **CPU-only** by default. On an NVIDIA machine, install the CUDA
-build instead (match your CUDA version — `cuda12.2`, `cuda12.6`, `cuda13.1`):
-
-```bash
-sudo apt install -y libgtsam-points-cuda12.2-dev ros-humble-glim-ros-cuda12.2
-```
-
-...and switch these three lines in `glim_config/config.json`:
-
-| | CPU | GPU |
+| Setting | CPU | NVIDIA GPU |
 |---|---|---|
 | `config_odometry` | `config_odometry_cpu.json` | `config_odometry_gpu.json` |
 | `config_sub_mapping` | `config_sub_mapping_passthrough.json` | `config_sub_mapping_gpu.json` |
 | `config_global_mapping` | `config_global_mapping_pose_graph.json` | `config_global_mapping_gpu.json` |
 
----
+The GPU GLIM apt package must match the locally installed CUDA toolkit. Use
+`nvcc --version` to identify the toolkit version. No source rebuild is needed after
+editing these JSON files because the commands below pass the configuration directory
+directly to GLIM.
 
-## Run
+The GPU JSON files select CUDA computation. On an NVIDIA PRIME system, use the two
+environment variables shown in the NVIDIA commands below to also force GLIM and RViz
+window rendering onto NVIDIA OpenGL. CPU-only systems must use the unprefixed commands.
 
-**Terminal 1 — driver.** Use `rviz_`, **not** `msg_` — `msg_` publishes Livox CustomMsg,
-which GLIM cannot read, and you get an empty screen with no error:
+The current higher-detail GPU profile uses:
+
+```text
+config_preprocess.json:       random_downsample_target = 20000
+config_sub_mapping_gpu.json:  submap_downsample_resolution = 0.05
+config_sub_mapping_gpu.json:  submap_target_num_points = 100000
+```
+
+## Run live SLAM
+
+Terminal 1 -- MID-360 driver, CPU/default launch:
 
 ```bash
-cd ~/Kratos/auto_fastlio2 && source install/setup.bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
 ros2 launch livox_ros_driver2 rviz_MID360_launch.py
 ```
 
-**Terminal 2 — GLIM:**
+Terminal 1 -- NVIDIA OpenGL for the raw-point RViz window:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 launch livox_ros_driver2 rviz_MID360_launch.py
+```
+
+Use `rviz_MID360_launch.py`; GLIM requires its `sensor_msgs/msg/PointCloud2` output.
+
+Terminal 2 -- GLIM, CPU/default launch:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+ros2 run glim_ros glim_rosnode --ros-args \
+  -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
+```
+
+Terminal 2 -- GLIM with CUDA modules and NVIDIA OpenGL rendering:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 run glim_ros glim_rosnode --ros-args \
+  -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
+```
+
+Keep the rover completely stationary until GLIM prints
+`initial IMU state estimation result`. Starting while moving can invalidate the initial
+IMU bias, orientation, and velocity estimate. After initialization, move smoothly and
+revisit mapped areas to support loop closure.
+
+Terminal 3 -- preconfigured CPU/default visualization:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
+```
+
+Terminal 3 -- preconfigured RViz forced onto NVIDIA OpenGL:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
+```
+
+`/glim_ros/points` is the current registered scan. `/glim_ros/map` is the accumulated
+map and updates approximately every 10 seconds.
+
+## Validate the session
 
 ```bash
 source /opt/ros/humble/setup.bash
-ros2 run glim_ros glim_rosnode --ros-args -p config_path:=$(realpath <repo>/glim_config)
+ros2 topic hz /livox/lidar
+ros2 topic hz /livox/imu
+ros2 topic hz /glim_ros/odom
+ros2 topic echo /glim_ros/odom --once --field pose.pose
+ros2 run tf2_ros tf2_echo map livox_frame
 ```
 
-**Terminal 3 — RViz:**
+Expected nominal rates are approximately 10 Hz for `/livox/lidar`, 200 Hz for
+`/livox/imu`, and 8-10 Hz for `/glim_ros/odom`.
+
+## Save the map
+
+Press `Ctrl+C` once in the GLIM terminal and wait for the `saved` message. Preserve the
+temporary dump immediately:
 
 ```bash
-rviz2 -d <repo>/glim_ros.rviz
+cd /path/to/auto_fastlio2
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+MAP_PATH="$REPO_ROOT/maps/glim_$(date +%Y%m%d_%H%M%S)"
+
+mkdir -p "$REPO_ROOT/maps"
+mv /tmp/dump "$MAP_PATH"
+echo "Saved map: $MAP_PATH"
 ```
 
-Hold still ~2 s at startup for IMU init, then move smoothly. Return to where you started
-so loop closure has something to close.
+The dump contains the factor graph, numbered submaps, session configuration, odometry
+trajectories, and globally optimized trajectories.
 
-Check it is running:
+## Open and export a saved map
+
+CPU/default viewer:
 
 ```bash
-ros2 topic hz /glim_ros/odom          # ~8-10 Hz
+source /opt/ros/humble/setup.bash
+ros2 run glim_ros offline_viewer --map_path /absolute/path/to/saved/glim_dump
 ```
 
-In RViz, `/glim_ros/points` is the live scan; `/glim_ros/map` is the accumulated map and
-updates only every 10 s.
-
----
-
-## Saving
-
-`Ctrl+C` terminal 2. GLIM saves automatically to `/tmp/dump` — no service call.
-
-`/tmp/dump` is **overwritten by the next run and deleted on reboot**, so move it now:
+CUDA-enabled map with its viewer forced onto NVIDIA OpenGL:
 
 ```bash
-mkdir -p ~/Kratos/maps && mv /tmp/dump ~/Kratos/maps/$(date +%Y%m%d_%H%M%S)
+source /opt/ros/humble/setup.bash
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 run glim_ros offline_viewer --map_path /absolute/path/to/saved/glim_dump
 ```
 
-Trajectories inside, TUM format: `odom_*.txt` before loop closure, `traj_*.txt` after.
-
----
-
-## Editing
+Use `File -> Save -> Export Points` to export PLY. Convert it to PCD if required:
 
 ```bash
-ros2 run glim_ros offline_viewer
+pcl_ply2pcd /path/to/map.ply /path/to/map.pcd
 ```
 
-`File → Open Map` → select a dump directory.
-
-**Add a loop closure:** right-click a submap sphere → `Loop begin`, right-click another →
-`Loop end`, drag to roughly align red and green, `Align`, then `Create Factor`.
-
-**Flatten a drifted surface:** right-click a point on the plane → `Bundle Adjustment
-(Plane)`, size the sphere to cover it, `Create Factor`.
-
-Point removal: `ros2 run glim_ros map_editor`.
-
----
-
-## Exporting
-
-`File → Save → Export Points` — writes **PLY**, not PCD.
+For manual point removal:
 
 ```bash
-sudo apt install pcl-tools
-pcl_ply2pcd map.ply map.pcd
+ros2 run glim_ros map_editor
+```
+
+Force the map editor onto NVIDIA OpenGL when an NVIDIA GPU is available:
+
+```bash
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 run glim_ros map_editor
+```
+
+Verify the renderer and monitor CUDA processes with:
+
+```bash
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+glxinfo -B | grep "OpenGL renderer"
+
+watch -n 1 nvidia-smi
 ```

@@ -144,3 +144,4 @@ imgui.ini
 frames_*.pdf
 frames_*.gv
 /test_waypoints.yaml
+maps/

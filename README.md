@@ -57,6 +57,7 @@ sudo apt install -y \
   git \
   libpcl-dev \
   libeigen3-dev \
+  mesa-utils \
   pcl-tools
 ```
 
@@ -154,6 +155,19 @@ Set these entries under `global` in `glim/glim_config/config.json`.
 No source rebuild is required after editing these repository-local GLIM JSON files. The
 launch command below passes their directory directly to GLIM.
 
+On systems using NVIDIA PRIME in `on-demand` mode, selecting the GPU JSON files enables
+CUDA computation but does not necessarily make the GLIM or RViz window use NVIDIA
+OpenGL. Prefix GUI commands with both variables below to force NVIDIA rendering:
+
+```bash
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+glxinfo -B | grep "OpenGL renderer"
+```
+
+The result should name the NVIDIA GPU rather than `llvmpipe`. These variables are only
+for NVIDIA systems. CPU-only systems must use the unprefixed commands.
+
 ### 1.6 Clone and build the Livox driver
 
 ```bash
@@ -199,7 +213,7 @@ commands do not assume where it was cloned.
 
 ### 2.1 Start the MID-360 driver
 
-Terminal 1:
+Terminal 1, CPU/default launch:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -207,6 +221,21 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch livox_ros_driver2 rviz_MID360_launch.py
 ```
+
+Terminal 1, NVIDIA launch with the driver's raw-point RViz forced onto the GPU:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 launch livox_ros_driver2 rviz_MID360_launch.py
+```
+
+The Livox driver does not perform CUDA processing; the NVIDIA prefix accelerates the
+RViz window started by this launch file.
 
 Use `rviz_MID360_launch.py`, not `msg_MID360_launch.py`. GLIM consumes
 `sensor_msgs/msg/PointCloud2`; the `msg_` launch publishes Livox `CustomMsg` data.
@@ -224,7 +253,7 @@ Expected rates are approximately 10 Hz for LiDAR frames and 200 Hz for IMU data.
 
 Stop the rover and keep it completely motionless before running this command.
 
-Terminal 2:
+Terminal 2, CPU/default launch:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -234,6 +263,23 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 ros2 run glim_ros glim_rosnode --ros-args \
   -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
 ```
+
+Terminal 2, NVIDIA launch with CUDA configuration and forced NVIDIA OpenGL:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 run glim_ros glim_rosnode --ros-args \
+  -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
+```
+
+This GPU command requires the three GPU JSON entries from section 1.5. The JSON files
+enable CUDA odometry and mapping; the environment variables accelerate GLIM's standard
+viewer with NVIDIA OpenGL.
 
 Keep the rover still until GLIM prints `initial IMU state estimation result`, normally
 after two to five seconds. Starting while the rover is moving can produce incorrect
@@ -245,12 +291,24 @@ expected when automatic MID-360 timestamp detection is enabled.
 
 ### 2.3 Visualize the live map
 
-Terminal 3:
+Terminal 3, CPU/default visualization:
 
 ```bash
 cd /path/to/auto_fastlio2
 source /opt/ros/humble/setup.bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
+```
+
+Terminal 3, RViz forced onto NVIDIA OpenGL:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
 rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
 ```
 
@@ -353,12 +411,26 @@ contents include:
 
 ## 5. Open, edit, and export a saved map
 
-Open a saved dump directly:
+Open a saved dump directly on a CPU-only system:
 
 ```bash
 source /opt/ros/humble/setup.bash
 ros2 run glim_ros offline_viewer --map_path /absolute/path/to/saved/glim_dump
 ```
+
+Open it with CUDA computation and NVIDIA OpenGL rendering:
+
+```bash
+source /opt/ros/humble/setup.bash
+
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 run glim_ros offline_viewer --map_path /absolute/path/to/saved/glim_dump
+```
+
+An offline viewer uses the configuration saved inside the dump. A map recorded with
+the GPU configuration loads CUDA mapping modules; the NVIDIA environment variables
+force its window onto the discrete GPU.
 
 Alternatively, launch `ros2 run glim_ros offline_viewer`, then select
 `File -> Open Map` and choose the dump directory.
@@ -370,10 +442,25 @@ The offline viewer can optimize explicit constraints:
 - Plane adjustment: right-click a point on a flat surface, choose
   `Bundle Adjustment (Plane)`, set the selection radius, and create the factor.
 
-Remove unwanted map points with:
+Remove unwanted map points on a CPU-only system with:
 
 ```bash
 ros2 run glim_ros map_editor
+```
+
+On an NVIDIA system, force the editor onto NVIDIA OpenGL:
+
+```bash
+__NV_PRIME_RENDER_OFFLOAD=1 \
+__GLX_VENDOR_LIBRARY_NAME=nvidia \
+ros2 run glim_ros map_editor
+```
+
+While a CUDA-enabled GLIM process or offline viewer is running, confirm NVIDIA usage
+with:
+
+```bash
+watch -n 1 nvidia-smi
 ```
 
 Export the map from `File -> Save -> Export Points`. GLIM exports PLY. Convert it to PCD
