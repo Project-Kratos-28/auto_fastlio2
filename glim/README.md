@@ -66,7 +66,20 @@ ros2 launch livox_ros_driver2 rviz_MID360_launch.py
 
 Use `rviz_MID360_launch.py`; GLIM requires its `sensor_msgs/msg/PointCloud2` output.
 
-Terminal 2 -- GLIM, CPU/default launch:
+Terminal 2 -- antenna angle filter:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch lidar_angle_filter angle_filter.launch.py
+```
+
+This publishes `/livox/lidar_filtered` for GLIM and removes 30-degree-wide sectors
+centered on the LiDAR +X and -X axes. Adjust `front_center_deg` in
+`src/lidar_angle_filter/config/angle_filter.yaml` if LiDAR +X is not rover-forward.
+
+Terminal 3 -- GLIM, CPU/default launch:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -77,7 +90,7 @@ ros2 run glim_ros glim_rosnode --ros-args \
   -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
 ```
 
-Terminal 2 -- GLIM with CUDA modules and NVIDIA OpenGL rendering:
+Terminal 3 -- GLIM with CUDA modules and NVIDIA OpenGL rendering:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -95,7 +108,7 @@ Keep the rover completely stationary until GLIM prints
 IMU bias, orientation, and velocity estimate. After initialization, move smoothly and
 revisit mapped areas to support loop closure.
 
-Terminal 3 -- preconfigured CPU/default visualization:
+Terminal 4 -- preconfigured CPU/default visualization:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -104,7 +117,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
 ```
 
-Terminal 3 -- preconfigured RViz forced onto NVIDIA OpenGL:
+Terminal 4 -- preconfigured RViz forced onto NVIDIA OpenGL:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -124,13 +137,14 @@ map and updates approximately every 10 seconds.
 ```bash
 source /opt/ros/humble/setup.bash
 ros2 topic hz /livox/lidar
+ros2 topic hz /livox/lidar_filtered
 ros2 topic hz /livox/imu
 ros2 topic hz /glim_ros/odom
 ros2 topic echo /glim_ros/odom --once --field pose.pose
 ros2 run tf2_ros tf2_echo map livox_frame
 ```
 
-Expected nominal rates are approximately 10 Hz for `/livox/lidar`, 200 Hz for
+Expected nominal rates are approximately 10 Hz for both LiDAR topics, 200 Hz for
 `/livox/imu`, and 8-10 Hz for `/glim_ros/odom`.
 
 ## Save the map

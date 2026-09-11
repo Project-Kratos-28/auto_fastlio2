@@ -6,7 +6,11 @@ localization and mapping (SLAM) with a Livox MID-360 and GLIM.
 The active pipeline is:
 
 ```text
-Livox MID-360 -> livox_ros_driver2 -> PointCloud2 + IMU -> GLIM -> odometry + 3D map
+                                 /livox/lidar
+Livox MID-360 -> livox_ros_driver2 -> angular filter -> /livox/lidar_filtered -> GLIM
+                         \--------> /livox/imu -------------------------------> GLIM
+                                                                              |
+                                                              odometry + 3D map
 ```
 
 GLIM performs continuous pose estimation while it builds and optimizes the map. This
@@ -168,7 +172,7 @@ glxinfo -B | grep "OpenGL renderer"
 The result should name the NVIDIA GPU rather than `llvmpipe`. These variables are only
 for NVIDIA systems. CPU-only systems must use the unprefixed commands.
 
-### 1.6 Clone and build the Livox driver
+### 1.6 Clone and build the ROS packages
 
 ```bash
 git clone https://github.com/Project-Kratos-28/auto_fastlio2.git
@@ -176,7 +180,7 @@ cd auto_fastlio2
 source /opt/ros/humble/setup.bash
 
 colcon build --symlink-install \
-  --packages-select livox_ros_driver2 \
+  --packages-select livox_ros_driver2 lidar_angle_filter \
   --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble
 
 source install/setup.bash
@@ -208,7 +212,7 @@ building the driver again.
 
 ## 2. Create a map with GLIM
 
-Use three terminals. In every terminal, change to the cloned repository first; the
+Use four terminals. In every terminal, change to the cloned repository first; the
 commands do not assume where it was cloned.
 
 ### 2.1 Start the MID-360 driver
@@ -249,11 +253,56 @@ ros2 topic hz /livox/imu
 
 Expected rates are approximately 10 Hz for LiDAR frames and 200 Hz for IMU data.
 
-### 2.2 Start GLIM SLAM
+### 2.2 Start the antenna angle filter
+
+Terminal 2:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch lidar_angle_filter angle_filter.launch.py
+```
+
+The filter reads `/livox/lidar` and publishes `/livox/lidar_filtered`, which is the
+topic configured as GLIM's input. It removes 30-degree-wide sectors centered on the
+LiDAR +X axis (front) and -X axis (back): -15 to +15 degrees and 165 to 180 / -180 to
+-165 degrees. All fields and per-point timestamps are preserved.
+
+The angle-filter settings are in `src/lidar_angle_filter/config/angle_filter.yaml`:
+
+| Parameter | Default | Meaning |
+|---|---:|---|
+| `input_topic` | `/livox/lidar` | Raw `PointCloud2` input from the Livox driver |
+| `output_topic` | `/livox/lidar_filtered` | Filtered cloud consumed by GLIM |
+| `front_center_deg` | `0.0` | Rover-forward direction in the LiDAR XY plane; 0° is +X and positive rotation is toward +Y |
+| `front_sector_deg` | `30.0` | Full width of the excluded front sector |
+| `back_sector_deg` | `30.0` | Full width of the excluded rear sector, centered 180° from the front |
+
+The sector values are full widths, not half-angles. To exclude 30 degrees on each side
+of an axis (a 60-degree-wide sector), set the corresponding value to `60.0`. Set a
+sector to `0.0` to disable it. If LiDAR +X does not point toward the rover's front,
+change `front_center_deg` to the rover-forward azimuth in the LiDAR frame.
+
+This is an all-range azimuth mask: valid environmental returns in those directions are
+also removed. It prevents antenna returns from entering new GLIM maps, but it does not
+alter maps that were saved before the filter was enabled.
+
+Confirm the filtered stream before starting GLIM:
+
+```bash
+ros2 topic hz /livox/lidar_filtered
+ros2 topic info /livox/lidar_filtered --verbose
+```
+
+The topic rate should remain approximately 10 Hz. After GLIM starts, the verbose topic
+information should list `glim_rosnode` as a subscriber.
+
+### 2.3 Start GLIM SLAM
 
 Stop the rover and keep it completely motionless before running this command.
 
-Terminal 2, CPU/default launch:
+Terminal 3, CPU/default launch:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -264,7 +313,7 @@ ros2 run glim_ros glim_rosnode --ros-args \
   -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
 ```
 
-Terminal 2, NVIDIA launch with CUDA configuration and forced NVIDIA OpenGL:
+Terminal 3, NVIDIA launch with CUDA configuration and forced NVIDIA OpenGL:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -289,9 +338,9 @@ completed.
 The one-time messages about large point timestamps and Livox `FLOAT64` nanoseconds are
 expected when automatic MID-360 timestamp detection is enabled.
 
-### 2.3 Visualize the live map
+### 2.4 Visualize the live map
 
-Terminal 3, CPU/default visualization:
+Terminal 4, CPU/default visualization:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -300,7 +349,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
 ```
 
-Terminal 3, RViz forced onto NVIDIA OpenGL:
+Terminal 4, RViz forced onto NVIDIA OpenGL:
 
 ```bash
 cd /path/to/auto_fastlio2
@@ -321,7 +370,7 @@ The supplied RViz layout already contains the required GLIM displays:
 The driver launch also opens its own RViz window for the raw point cloud. Use the GLIM
 RViz window or GLIM's standard viewer to inspect the accumulated map.
 
-### 2.4 Record the area
+### 2.5 Record the area
 
 After IMU initialization:
 
@@ -377,13 +426,14 @@ If the driver frame was changed from `livox_frame`, substitute its configured fr
 Useful live publishers can be confirmed without modifying RViz:
 
 ```bash
+ros2 topic info /livox/lidar_filtered --verbose
 ros2 topic info /glim_ros/points --verbose
 ros2 topic info /glim_ros/map --verbose
 ```
 
 ## 4. Stop and save a map
 
-In Terminal 2, press `Ctrl+C` once. Wait for GLIM to print `saved` before closing the
+In Terminal 3, press `Ctrl+C` once. Wait for GLIM to print `saved` before closing the
 terminal or stopping the driver. GLIM writes the completed graph, submaps,
 configuration, and trajectories to `/tmp/dump`.
 
@@ -477,5 +527,6 @@ pcl_ply2pcd /path/to/map.ply /path/to/map.pcd
 | `glim/glim_config/` | MID-360 GLIM CPU and GPU configuration files |
 | `glim/glim_ros.rviz` | Preconfigured live GLIM RViz layout |
 | `glim/README.md` | Compact GLIM command reference and configuration notes |
+| `src/lidar_angle_filter/` | Front/rear antenna-sector PointCloud2 filter |
 | `src/livox_ros_driver2/` | Livox ROS 2 driver source and MID-360 network configuration |
 | `maps/` | Local GLIM dump storage; generated at runtime and ignored by Git |

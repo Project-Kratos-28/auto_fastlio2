@@ -1,0 +1,9 @@
+lidar_angle_filter:
+  ros__parameters:
+    input_topic: /livox/lidar
+    output_topic: /livox/lidar_filtered
+    # Degrees in the LiDAR XY plane. Zero is +X; positive angles rotate toward +Y.
+    front_center_deg: 0.0
+    # Each value is the full excluded width, not the half-angle.
+    front_sector_deg: 30.0
+    back_sector_deg: 30.0
