@@ -32,7 +32,6 @@
 // CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
-#include "interface/srv/add_waypoint.hpp"
 #include <omp.h>
 #include <mutex>
 #include <math.h>
@@ -949,10 +948,6 @@ public:
         map_pub_timer_ = rclcpp::create_timer(this, this->get_clock(), map_period_ms, std::bind(&LaserMappingNode::map_publish_callback, this));
 
         map_save_srv_ = this->create_service<std_srvs::srv::Trigger>("map_save", std::bind(&LaserMappingNode::map_save_callback, this, std::placeholders::_1, std::placeholders::_2));
-        add_waypoint_srv_ = this->create_service<interface::srv::AddWaypoint>(
-    "add_waypoint",
-        std::bind(&LaserMappingNode::add_waypoint_callback, this, std::placeholders::_1, std::placeholders::_2));
-
         RCLCPP_INFO(this->get_logger(), "Node init finished.");
     }
 
@@ -1127,9 +1122,8 @@ void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_
     if (pcd_save_en)
     {
         save_to_pcd();
-        save_waypoints_yaml();
         res->success = true;
-        res->message = "Map and waypoints saved.";
+        res->message = "Map saved.";
     }
     else
     {
@@ -1138,40 +1132,6 @@ void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_
     }
 }
 
-void add_waypoint_callback(
-    const std::shared_ptr<interface::srv::AddWaypoint::Request> req,
-    std::shared_ptr<interface::srv::AddWaypoint::Response> res)
-{
-    double yaw = SO3ToEuler(state_point.rot)(2);
-    waypoints_.push_back({req->name, state_point.pos(0), state_point.pos(1), state_point.pos(2), yaw});
-    res->success = true;
-    res->message = "Waypoint '" + req->name + "' added at (" +
-        std::to_string(state_point.pos(0)) + ", " +
-        std::to_string(state_point.pos(1)) + ", " +
-        std::to_string(state_point.pos(2)) + ")";
-    RCLCPP_INFO(this->get_logger(), "%s", res->message.c_str());
-}
-
-void save_waypoints_yaml()
-{
-    std::string yaml_path = map_file_path;
-    size_t ext_pos = yaml_path.rfind(".pcd");
-    if (ext_pos != std::string::npos) yaml_path = yaml_path.substr(0, ext_pos);
-    yaml_path += "_waypoints.yaml";
-
-    std::ofstream fout(yaml_path, std::ios::out);
-    fout << "waypoints:\n";
-    for (const auto &wp : waypoints_)
-    {
-        fout << "  - name: \"" << wp.name << "\"\n";
-        fout << "    x: " << wp.x << "\n";
-        fout << "    y: " << wp.y << "\n";
-        fout << "    z: " << wp.z << "\n";
-        fout << "    yaw: " << wp.yaw << "\n";
-    }
-    fout.close();
-    RCLCPP_INFO(this->get_logger(), "Waypoints saved to %s", yaml_path.c_str());
-}
 private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
@@ -1187,10 +1147,6 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::TimerBase::SharedPtr map_pub_timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr map_save_srv_;
-    struct Waypoint { std::string name; double x, y, z, yaw; };
-    std::vector<Waypoint> waypoints_;
-    rclcpp::Service<interface::srv::AddWaypoint>::SharedPtr add_waypoint_srv_;
-
     bool effect_pub_en = false, map_pub_en = false;
     int effect_feat_num = 0, frame_num = 0;
     double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_incre = 0, aver_time_solve = 0, aver_time_const_H_time = 0;

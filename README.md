@@ -520,13 +520,51 @@ when another component requires PCD:
 pcl_ply2pcd /path/to/map.ply /path/to/map.pcd
 ```
 
-## 6. Repository layout
+## 6. Create a Nav2 2D map from a GLIM PCD export
+
+`pcd2pgm` turns the exported 3D map into a Nav2-compatible PGM and YAML pair. It
+filters the cloud to a vertical obstacle slice, projects that slice onto the XY
+plane, and writes the image metadata with the correct map origin and resolution.
+
+Build the converter once:
+
+```bash
+cd /path/to/auto_fastlio2
+source /opt/ros/humble/setup.bash
+colcon build --packages-select pcd2pgm
+source install/setup.bash
+```
+
+Then convert the saved GLIM dump directly (or pass an exported PCD file instead):
+
+```bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+ros2 run pcd2pgm pcd2pgm /absolute/path/to/saved/glim_dump "$REPO_ROOT/maps/nav2_map.pgm" \
+  --resolution 0.05 --min-z -0.3 --max-z 1.5
+```
+
+This produces `nav2_map.pgm` and `nav2_map.yaml`. The default height slice is a
+starting point only: GLIM's Z origin is established when mapping begins. Inspect the
+PCD and adjust `--min-z` and `--max-z` to retain walls, furniture, and posts while
+excluding the floor and ceiling. Empty cells are free by default; use `--unknown` if
+unobserved space must remain unknown. Run `ros2 run pcd2pgm pcd2pgm --help` for
+wall-thickening and noise-rejection options.
+
+Load the resulting YAML with Nav2:
+
+```bash
+ros2 launch nav2_bringup bringup_launch.py \
+  map:="$REPO_ROOT/maps/nav2_map.yaml" use_sim_time:=False
+```
+
+## 7. Repository layout
 
 | Path | Purpose |
 |---|---|
 | `glim/glim_config/` | MID-360 GLIM CPU and GPU configuration files |
 | `glim/glim_ros.rviz` | Preconfigured live GLIM RViz layout |
 | `glim/README.md` | Compact GLIM command reference and configuration notes |
+| `src/pcd2pgm/` | GLIM PCD to Nav2 PGM/YAML command-line converter |
 | `src/lidar_angle_filter/` | Front/rear antenna-sector PointCloud2 filter |
 | `src/livox_ros_driver2/` | Livox ROS 2 driver source and MID-360 network configuration |
 | `maps/` | Local GLIM dump storage; generated at runtime and ignored by Git |

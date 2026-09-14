@@ -20,67 +20,38 @@ in a later GLIM version than the apt PPA ships), so this exists to make dump exp
 scriptable. Unlike `waypoint_manager`, it isn't a GLIM extension module and doesn't
 need to go inside the `glim_ext` clone at all — it only needs `glim` itself.
 
-## Build (one-time, separate from the main workspace)
+## Build
 
-`glim_ext` (koide3's GLIM extension-module repo) is not part of this workspace and is
-not vendored here in full — clone it fresh, then drop the two `waypoint_*` packages in:
-
-```bash
-git clone https://github.com/koide3/glim_ext.git ~/glim_ext
-cp -r waypoint_manager waypoint_interfaces ~/glim_ext/modules/mapping/
-```
-
-Add `waypoint_interfaces` as a dependency and wire the new module into
-`~/glim_ext/CMakeLists.txt` (top-level, aggregated build — modules are not independent
-colcon packages in this repo):
-
-```cmake
-# near the other option(...) lines:
-option(ENABLE_WAYPOINT_MANAGER "Enable submap-relative waypoint manager module" ON)
-
-# near the other `<depend>` lines in glim_ext/package.xml, add:
-#   <depend>waypoint_interfaces</depend>
-
-# near the other if(ENABLE_...) add_subdirectory(...) blocks:
-if(ENABLE_WAYPOINT_MANAGER)
-  add_subdirectory(modules/mapping/waypoint_manager)
-  list(APPEND glim_ext_LIBRARIES waypoint_manager)
-endif()
-```
-
-Build (needs `waypoint_interfaces` built first, then `glim_ext` — a separate colcon
-workspace from the main one, `glim` and this main workspace's install just need to be
-sourced first):
+`waypoint_interfaces`, `waypoint_manager`, and `glim_dump_export` build directly within this ROS 2 workspace:
 
 ```bash
-mkdir -p ~/glim_ext_ws/src
-ln -s ~/glim_ext ~/glim_ext_ws/src/glim_ext
-cp -r waypoint_interfaces glim_dump_export ~/glim_ext_ws/src/
-
+cd /path/to/ros2_livox_ws
 source /opt/ros/humble/setup.bash
-source /path/to/auto_fastlio2/install/setup.bash   # only needed if you also use lidar_angle_filter etc.
-cd ~/glim_ext_ws
-colcon build --symlink-install --packages-select waypoint_interfaces glim_ext glim_dump_export
+colcon build --symlink-install --packages-select waypoint_interfaces waypoint_manager glim_dump_export
+```
+
+To run unit tests on `waypoint_manager`:
+
+```bash
+colcon test --packages-select waypoint_manager --event-handlers console_direct+
 ```
 
 ## Run
 
-Add `libwaypoint_manager.so` to `extension_modules` in `glim_config/config_ros.json`
-(already done in this repo's `glim_config/`). Source the new workspace alongside the
-others before launching GLIM:
+`libwaypoint_manager.so` is already configured in `extension_modules` in `glim/glim_config/config_ros.json`. Sourcing this workspace places `libwaypoint_manager.so` on `LD_LIBRARY_PATH`:
 
 ```bash
+cd /path/to/ros2_livox_ws
 source /opt/ros/humble/setup.bash
-source /path/to/auto_fastlio2/install/setup.bash
-source ~/glim_ext_ws/install/setup.bash
-ros2 run glim_ros glim_rosnode --ros-args -p config_path:=$(realpath /path/to/glim_config)
+source install/setup.bash
+ros2 run glim_ros glim_rosnode --ros-args -p config_path:=$(realpath glim/glim_config)
 ```
 
 ## Services / topics
 
 | Interface | Type | Purpose |
 |---|---|---|
-| `/add_waypoint` | `waypoint_interfaces/srv/AddWaypoint` | Tag the current pose as a named waypoint |
+| `/add_waypoint` | `waypoint_interfaces/srv/AddWaypoint` | Tag the current pose as a named waypoint; it is queued until GLIM finalizes the submap containing that frame |
 | `/get_waypoint` | `waypoint_interfaces/srv/GetWaypoint` | Resolve a named waypoint to its current `map`-frame pose, computed fresh from the submap's live-corrected position every call |
 | `/list_waypoints` | `waypoint_interfaces/srv/ListWaypoints` | Names of everything tagged so far |
 | `/save_waypoints` | `waypoint_interfaces/srv/SaveWaypoints` | Write all tagged waypoints to a YAML file |
@@ -110,5 +81,6 @@ map before exporting.
   cannot currently be reloaded into a new one. Loading requires solving submap
   correspondence between the old and new sessions (a relocalization problem), not yet
   implemented.
-- `/add_waypoint` returns `success=false` until GLIM has processed at least one
-  odometry frame and formed at least one submap (i.e., after a small amount of motion).
+- `/add_waypoint` returns `success=false` until GLIM has processed an odometry frame.
+  A tag made before its submap is finalized succeeds but remains pending (and is not
+  returned by `/get_waypoint`, `/list_waypoints`, or autosave) until that submap closes.

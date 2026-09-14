@@ -1,11 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <mutex>
 #include <chrono>
 #include <string>
 #include <vector>
 #include <fstream>
 #include <unordered_map>
+#include <cmath>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
@@ -48,13 +50,44 @@ class WaypointManager : public ExtensionModuleBase {
 public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
+  struct WaypointEntry {
+    std::string name;
+    int submap_id;
+    Eigen::Isometry3d T_submap_sensor;
+  };
+
+  // A completed submap expressed in GLIM odometry coordinates.  The global
+  // mapper later changes T_world_origin, but these two values remain fixed.
+  struct SubmapReference {
+    int id;
+    double first_stamp;
+    double last_stamp;
+    Eigen::Isometry3d T_odom_origin_sensor;
+  };
+
+  struct PendingWaypoint {
+    std::string name;
+    double stamp;
+    Eigen::Isometry3d T_odom_sensor;
+  };
+
   WaypointManager() : logger(create_module_logger("waypoint_manager")) {
     logger->info("initializing waypoint manager");
 
     using std::placeholders::_1;
-    OdometryEstimationCallbacks::on_update_new_frame.add(std::bind(&WaypointManager::on_update_new_frame, this, _1));
-    GlobalMappingCallbacks::on_insert_submap.add(std::bind(&WaypointManager::on_insert_submap, this, _1));
-    GlobalMappingCallbacks::on_update_submaps.add(std::bind(&WaypointManager::on_update_submaps, this, _1));
+    odom_update_callback_id = OdometryEstimationCallbacks::on_update_new_frame.add(std::bind(&WaypointManager::on_update_new_frame, this, _1));
+    new_submap_callback_id = SubMappingCallbacks::on_new_submap.add(std::bind(&WaypointManager::on_new_submap, this, _1));
+    insert_submap_callback_id = GlobalMappingCallbacks::on_insert_submap.add(std::bind(&WaypointManager::on_insert_submap, this, _1));
+    update_submaps_callback_id = GlobalMappingCallbacks::on_update_submaps.add(std::bind(&WaypointManager::on_update_submaps, this, _1));
+  }
+
+  ~WaypointManager() override {
+    // Callback slots outlive extension instances.  Remove every raw-this
+    // callback so unloading the module cannot leave a dangling invocation.
+    OdometryEstimationCallbacks::on_update_new_frame.remove(odom_update_callback_id);
+    SubMappingCallbacks::on_new_submap.remove(new_submap_callback_id);
+    GlobalMappingCallbacks::on_insert_submap.remove(insert_submap_callback_id);
+    GlobalMappingCallbacks::on_update_submaps.remove(update_submaps_callback_id);
   }
 
   virtual std::vector<GenericTopicSubscription::Ptr> create_subscriptions(rclcpp::Node& node) override {
@@ -84,22 +117,49 @@ public:
   }
 
   void on_update_new_frame(const EstimationFrame::ConstPtr& frame) {
+    if (!frame) {
+      return;
+    }
     std::lock_guard<std::mutex> lk(mtx);
     latest_frame_pose = frame->T_world_sensor();
+    latest_frame_stamp = frame->stamp;
     has_frame = true;
   }
 
+  void on_new_submap(const SubMap::ConstPtr& submap) {
+    if (!submap || submap->frames.empty()) {
+      return;
+    }
+
+    // A frame's T_world_sensor() is in GLIM's odometry trajectory despite its
+    // historical name.  Keep the submap origin in that same coordinate system;
+    // only T_world_origin is in the graph-corrected map frame.
+    const auto& first = submap->frames.front();
+    const auto& last = submap->frames.back();
+    const auto& origin = submap->origin_frame();
+    if (!first || !last || !origin) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lk(mtx);
+    submap_references.push_back({submap->id, first->stamp, last->stamp, origin->T_world_sensor()});
+    bind_pending_waypoints_locked();
+  }
+
   void on_insert_submap(const SubMap::ConstPtr& submap) {
+    if (!submap) {
+      return;
+    }
     std::lock_guard<std::mutex> lk(mtx);
     submap_world_pose[submap->id] = submap->T_world_origin;
-    latest_submap_id = submap->id;
-    latest_submap_T_world_origin = submap->T_world_origin;
   }
 
   void on_update_submaps(const std::vector<SubMap::Ptr>& submaps) {
     std::lock_guard<std::mutex> lk(mtx);
     for (const auto& sm : submaps) {
-      submap_world_pose[sm->id] = sm->T_world_origin;
+      if (sm) {
+        submap_world_pose[sm->id] = sm->T_world_origin;
+      }
     }
   }
 
@@ -108,20 +168,30 @@ public:
     std::shared_ptr<waypoint_interfaces::srv::AddWaypoint::Response> res) {
     std::lock_guard<std::mutex> lk(mtx);
 
-    if (!has_frame || latest_submap_id < 0) {
+    if (!has_frame) {
       res->success = false;
-      res->message = "no odometry/submap yet - move the sensor first";
+      res->message = "no odometry yet - move the sensor first";
       return;
     }
 
-    // Pose of the sensor relative to the current submap's own origin.
-    // Frozen forever - never re-derived from a world-frame number.
-    const Eigen::Isometry3d local_pose = latest_submap_T_world_origin.inverse() * latest_frame_pose;
-    waypoints.push_back({req->name, latest_submap_id, local_pose});
+    if (req->name.empty()) {
+      res->success = false;
+      res->message = "waypoint name must not be empty";
+      return;
+    }
 
+    erase_waypoint_named_locked(req->name);
+    erase_pending_waypoint_named_locked(req->name);
+    const auto submap = find_submap_for_stamp_locked(latest_frame_stamp);
+    if (submap) {
+      add_waypoint_locked(req->name, latest_frame_pose, *submap);
+      res->message = "waypoint '" + req->name + "' tagged in submap " + std::to_string(submap->id);
+    } else {
+      pending_waypoints.push_back({req->name, latest_frame_stamp, latest_frame_pose});
+      res->message = "waypoint '" + req->name + "' queued until its submap is finalized";
+      logger->info("queued waypoint '{}' at stamp={}", req->name, latest_frame_stamp);
+    }
     res->success = true;
-    res->message = "waypoint '" + req->name + "' tagged in submap " + std::to_string(latest_submap_id);
-    logger->info("tagged waypoint '{}' submap_id={}", req->name, latest_submap_id);
   }
 
   void get_waypoint_cb(
@@ -137,7 +207,7 @@ public:
       // Resolved fresh from the submap's CURRENT pose - this is the whole point.
       const Eigen::Isometry3d T_world = it->second * wp.T_submap_sensor;
       const Eigen::Vector3d t = T_world.translation();
-      const Eigen::Quaterniond q(T_world.linear());
+      const Eigen::Quaterniond q = Eigen::Quaterniond(T_world.linear()).normalized();
 
       res->found = true;
       res->pose.header.frame_id = "map";
@@ -168,9 +238,13 @@ public:
     const std::shared_ptr<waypoint_interfaces::srv::SaveWaypoints::Request> req,
     std::shared_ptr<waypoint_interfaces::srv::SaveWaypoints::Response> res) {
     std::lock_guard<std::mutex> lk(mtx);
-    const bool ok = write_yaml(req->path);
+    std::string path = req->path;
+    if (path.empty()) {
+      path = "/tmp/waypoints.yaml";
+    }
+    const bool ok = write_yaml(path);
     res->success = ok;
-    res->message = ok ? ("saved " + std::to_string(waypoints.size()) + " waypoints to " + req->path) : ("failed to open " + req->path);
+    res->message = ok ? ("saved " + std::to_string(waypoints.size()) + " waypoints to " + path) : ("failed to open " + path);
   }
 
   void autosave() {
@@ -194,13 +268,26 @@ public:
     yml << YAML::Key << "waypoints" << YAML::Value << YAML::BeginSeq;
     for (const auto& wp : waypoints) {
       const Eigen::Vector3d t = wp.T_submap_sensor.translation();
-      const Eigen::Quaterniond q(wp.T_submap_sensor.linear());
+      const Eigen::Quaterniond q = Eigen::Quaterniond(wp.T_submap_sensor.linear()).normalized();
 
       yml << YAML::BeginMap;
       yml << YAML::Key << "name" << YAML::Value << wp.name;
       yml << YAML::Key << "submap_id" << YAML::Value << wp.submap_id;
       yml << YAML::Key << "local_xyz" << YAML::Value << YAML::Flow << std::vector<double>{t.x(), t.y(), t.z()};
       yml << YAML::Key << "local_qxyzw" << YAML::Value << YAML::Flow << std::vector<double>{q.x(), q.y(), q.z(), q.w()};
+
+      const auto it = submap_world_pose.find(wp.submap_id);
+      if (it != submap_world_pose.end()) {
+        const Eigen::Isometry3d T_world = it->second * wp.T_submap_sensor;
+        const Eigen::Vector3d t_map = T_world.translation();
+        const Eigen::Quaterniond q_map = Eigen::Quaterniond(T_world.linear()).normalized();
+        const double yaw = std::atan2(2.0 * (q_map.w() * q_map.z() + q_map.x() * q_map.y()),
+                                      1.0 - 2.0 * (q_map.y() * q_map.y() + q_map.z() * q_map.z()));
+        yml << YAML::Key << "map_xyz" << YAML::Value << YAML::Flow << std::vector<double>{t_map.x(), t_map.y(), t_map.z()};
+        yml << YAML::Key << "map_yaw" << YAML::Value << yaw;
+        yml << YAML::Key << "map_qxyzw" << YAML::Value << YAML::Flow << std::vector<double>{q_map.x(), q_map.y(), q_map.z(), q_map.w()};
+      }
+
       yml << YAML::EndMap;
     }
     yml << YAML::EndSeq;
@@ -273,21 +360,66 @@ public:
     marker_pub->publish(markers);
   }
 
+  // Accessors for testing
+  const std::vector<WaypointEntry>& get_waypoints() const { return waypoints; }
+  size_t count() const { return waypoints.size(); }
+
 private:
-  struct WaypointEntry {
-    std::string name;
-    int submap_id;
-    Eigen::Isometry3d T_submap_sensor;
-  };
+  const SubmapReference* find_submap_for_stamp_locked(const double stamp) const {
+    for (auto it = submap_references.rbegin(); it != submap_references.rend(); ++it) {
+      if (it->first_stamp <= stamp && stamp <= it->last_stamp) {
+        return &*it;
+      }
+    }
+    return nullptr;
+  }
+
+  void erase_waypoint_named_locked(const std::string& name) {
+    waypoints.erase(
+      std::remove_if(waypoints.begin(), waypoints.end(), [&name](const WaypointEntry& wp) { return wp.name == name; }),
+      waypoints.end());
+  }
+
+  void erase_pending_waypoint_named_locked(const std::string& name) {
+    pending_waypoints.erase(
+      std::remove_if(pending_waypoints.begin(), pending_waypoints.end(), [&name](const PendingWaypoint& wp) { return wp.name == name; }),
+      pending_waypoints.end());
+  }
+
+  void add_waypoint_locked(
+    const std::string& name,
+    const Eigen::Isometry3d& T_odom_sensor,
+    const SubmapReference& submap) {
+    // Both terms are odometry poses, so this is invariant to all prior and
+    // future global-map corrections.  It can safely be multiplied by the live
+    // T_world_origin when the waypoint is queried or visualized.
+    const Eigen::Isometry3d local_pose = submap.T_odom_origin_sensor.inverse() * T_odom_sensor;
+    waypoints.push_back({name, submap.id, local_pose});
+    logger->info("tagged waypoint '{}' submap_id={}", name, submap.id);
+  }
+
+  void bind_pending_waypoints_locked() {
+    for (auto it = pending_waypoints.begin(); it != pending_waypoints.end();) {
+      const auto submap = find_submap_for_stamp_locked(it->stamp);
+      if (!submap) {
+        ++it;
+        continue;
+      }
+
+      add_waypoint_locked(it->name, it->T_odom_sensor, *submap);
+      it = pending_waypoints.erase(it);
+    }
+  }
 
   std::mutex mtx;
   bool has_frame = false;
   Eigen::Isometry3d latest_frame_pose = Eigen::Isometry3d::Identity();
-  int latest_submap_id = -1;
-  Eigen::Isometry3d latest_submap_T_world_origin = Eigen::Isometry3d::Identity();
+  double latest_frame_stamp = 0.0;
 
   std::unordered_map<int, Eigen::Isometry3d> submap_world_pose;
+  std::vector<SubmapReference> submap_references;
   std::vector<WaypointEntry> waypoints;
+  std::vector<PendingWaypoint> pending_waypoints;
 
   const std::string autosave_path = "/tmp/waypoints_autosave.yaml";
 
@@ -300,6 +432,11 @@ private:
   rclcpp::TimerBase::SharedPtr autosave_timer;
 
   std::shared_ptr<spdlog::logger> logger;
+
+  int odom_update_callback_id = -1;
+  int new_submap_callback_id = -1;
+  int insert_submap_callback_id = -1;
+  int update_submaps_callback_id = -1;
 };
 
 }  // namespace glim

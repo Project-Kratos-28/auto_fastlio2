@@ -11,10 +11,14 @@
 
   <depend>rclcpp</depend>
   <depend>glim</depend>
+  <depend>glim_ros</depend>
+  <depend>eigen</depend>
   <depend>visualization_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>waypoint_interfaces</depend>
   <depend>yaml_cpp_vendor</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

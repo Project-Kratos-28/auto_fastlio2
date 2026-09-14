@@ -242,8 +242,8 @@ watch -n 1 nvidia-smi
 `extension_modules` in `glim_config/config_ros.json` already loads
 `libwaypoint_manager.so` — a GLIM extension module that tags waypoints relative to the
 current submap's own origin, so a tagged point automatically rides along with every
-loop-closure correction instead of going stale. Requires a one-time separate build; see
-[`glim_ext_addon/README.md`](glim_ext_addon/README.md) for the build steps and the full
+loop-closure correction instead of going stale. Built directly in this workspace; see
+[`glim_ext_addon/README.md`](glim_ext_addon/README.md) for build commands and the full
 service list (`/add_waypoint`, `/get_waypoint`, `/save_waypoints`, `/list_waypoints`).
 
 Single-session only for now — see that README's "Known limitations" for why, and see
