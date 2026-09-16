@@ -1,0 +1,43 @@
+<!--
+  Same shape as Nav2's default "navigate_w_replanning_and_recovery" tree, with
+  the Spin recovery REMOVED.
+
+  Why: the rover can't turn in place. double_ackermann_controller turns
+  (linear.x = 0, angular.z != 0) into a turning radius of 0, which asks for
+  ~146 deg of steering, but the joints stop at +-90 deg. Recoveries here are
+  only: clear costmaps, wait, back up in a straight line.
+
+  Read it top-down:
+    - Every 1 s, replan a path to the goal, then keep following it.
+    - If following fails, clear the local costmap and retry (up to 6 times total).
+    - If it still fails, clear both costmaps, wait 5 s, back up 0.3 m, and retry.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Wait wait_duration="5"/>
+          <BackUp backup_dist="0.30" backup_speed="0.10"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

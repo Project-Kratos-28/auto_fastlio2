@@ -1,9 +1,16 @@
-# Livox MID-360 GLIM SLAM Workspace
+# Livox MID-360 GLIM SLAM + Nav2 Workspace
 
-ROS 2 Humble workspace for real-time LiDAR-inertial odometry and 3D simultaneous
-localization and mapping (SLAM) with a Livox MID-360 and GLIM.
+ROS 2 Humble workspace for Project Kratos rover autonomy with a Livox MID-360.
+It covers real-time LiDAR-inertial SLAM with GLIM, submap-relative waypoints,
+a live 2D occupancy grid, and Nav2 navigation to the tagged waypoints.
+(The repo name is historical. FAST-LIO2 is still in `src/FAST_LIO` but is not
+part of the active pipeline.)
 
-The active pipeline is:
+> **Start here for the autonomous mission:** [`docs/README.md`](docs/README.md).
+> It covers the mission, the runbooks, and where every piece lives.
+> **AI assistants / code reviewers:** read [`AGENTS.md`](AGENTS.md) first.
+
+The SLAM pipeline (sections 1-5 below) is:
 
 ```text
                                  /livox/lidar
@@ -13,10 +20,22 @@ Livox MID-360 -> livox_ros_driver2 -> angular filter -> /livox/lidar_filtered ->
                                                               odometry + 3D map
 ```
 
-GLIM performs continuous pose estimation while it builds and optimizes the map. This
-repository does not provide autonomous path planning, waypoint following, or
-localization against a previously saved map. Loading a saved GLIM dump in the offline
-viewer is for visualization, editing, and export; it does not start live localization.
+GLIM performs continuous pose estimation while it builds and optimizes the map. The
+autonomous mission builds on that live session:
+
+```text
+GLIM (+ waypoint_manager) --/glim_ros/map--> pcd2pgm --/map--> Nav2 (kratos_nav) --/cmd_vel-->
+  |  TF map->odom->base_link                                   ^
+  +-- /get_waypoint <-- waypoint_mission.py --NavigateToPose---+
+```
+
+Map and tag waypoints by hand, close the loop, then let Nav2 drive to each waypoint in
+the same GLIM session. See section 6 and [`docs/LIVE_MISSION_TEST.md`](docs/LIVE_MISSION_TEST.md).
+
+This repository does **not** provide localization against a previously saved map
+(GLIM 1.2.2 has no such mode). Waypoints are only valid within the session that
+tagged them. Loading a saved GLIM dump in the offline viewer is for visualization,
+editing, and export; it does not start live localization.
 
 ## 1. Getting started and workspace setup
 
@@ -53,6 +72,8 @@ sudo apt update
 sudo apt upgrade
 sudo apt install -y \
   ros-humble-desktop \
+  ros-humble-navigation2 \
+  ros-humble-nav2-bringup \
   ros-dev-tools \
   python3-colcon-common-extensions \
   python3-rosdep \
@@ -181,12 +202,19 @@ source /opt/ros/humble/setup.bash
 
 colcon build --symlink-install \
   --packages-select livox_ros_driver2 lidar_angle_filter \
-  --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble
+    waypoint_interfaces waypoint_manager glim_dump_export pcd2pgm kratos_nav \
+  --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble -DCMAKE_BUILD_TYPE=Release
 
 source install/setup.bash
 ```
 
-GLIM is installed system-wide and is not built by `colcon` in this workspace.
+GLIM itself is installed system-wide and is not built here. The
+`-DROS_EDITION`/`-DDISTRO_ROS` flags are required by `livox_ros_driver2` on the first
+configure.
+
+**Also build the GLIM 1.2.2 bug-fix overlay** if pcd2pgm/Nav2 will consume
+`/glim_ros/map`. Without it, `/map` can get phantom walls. Follow
+[`glim/glim_ros_fix/README.md`](glim/glim_ros_fix/README.md).
 
 ### 1.7 Configure the MID-360 network
 
@@ -302,11 +330,30 @@ information should list `glim_rosnode` as a subscriber.
 
 Stop the rover and keep it completely motionless before running this command.
 
+`glim/glim_config/config_ros.json` uses `base_frame_id: base_link`. GLIM needs the
+static transform `base_link -> livox_frame` to publish its pose TF. Without it, GLIM
+warns `Failed to lookup transform` every frame and Nav2 has no pose. Start it first:
+
+- For the full mission, `ros2 launch kratos_nav nav.launch.py` provides it.
+- For SLAM only, run this in its own terminal first:
+
+  ```bash
+  source /opt/ros/humble/setup.bash
+  ros2 run tf2_ros static_transform_publisher --z 0.60 --frame-id base_link --child-frame-id livox_frame
+  ```
+
+  0.60 m is the placeholder LiDAR height above the ground. Keep it equal to
+  `lidar_z` in `src/kratos_nav/launch/nav.launch.py`.
+
+The config also loads `libwaypoint_manager.so`, so `source install/setup.bash` in this
+terminal. If you built the `glim_ros_fix` overlay, source its `local_setup.bash` last.
+
 Terminal 3, CPU/default launch:
 
 ```bash
 cd /path/to/auto_fastlio2
 source /opt/ros/humble/setup.bash
+source install/setup.bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 ros2 run glim_ros glim_rosnode --ros-args \
@@ -418,7 +465,8 @@ For a physical motion check:
 Inspect the complete GLIM transform chain:
 
 ```bash
-ros2 run tf2_ros tf2_echo map livox_frame
+ros2 run tf2_ros tf2_echo map base_link     # published by GLIM
+ros2 run tf2_ros tf2_echo map livox_frame   # via the static base_link -> livox_frame TF
 ```
 
 If the driver frame was changed from `livox_frame`, substitute its configured frame ID.
@@ -520,42 +568,45 @@ when another component requires PCD:
 pcl_ply2pcd /path/to/map.ply /path/to/map.pcd
 ```
 
-## 6. Create a Nav2 2D map from a GLIM PCD export
+## 6. Live 2D map and autonomous navigation
 
-`pcd2pgm` turns the exported 3D map into a Nav2-compatible PGM and YAML pair. It
-filters the cloud to a vertical obstacle slice, projects that slice onto the XY
-plane, and writes the image metadata with the correct map origin and resolution.
+These are the pieces added on top of live GLIM for the competition mission. The full
+terminal-by-terminal bring-up, checks and troubleshooting are in
+[`docs/LIVE_MISSION_TEST.md`](docs/LIVE_MISSION_TEST.md).
 
-Build the converter once:
+| Piece | Package / path | What it does |
+|---|---|---|
+| Waypoints | `glim/glim_ext_addon/waypoint_manager` | GLIM extension: `/add_waypoint`, `/get_waypoint`, `/list_waypoints`, `/save_waypoints`. Poses ride along with loop closure |
+| Live 2D map | `src/pcd2pgm` (live mode) | `/glim_ros/map` -> filters -> fixed 50x50 m, 0.05 m `/map` (`OccupancyGrid`, transient_local) |
+| Navigation | `src/kratos_nav` | `nav.launch.py`: Nav2 without map_server/AMCL plus the static `base_link -> livox_frame` TF. `waypoint_mission.py`: drives to each GLIM waypoint in order |
+| Wheel interface | `src/kratos_nav/scripts/rover_bridge.py` | `/cmd_vel` -> the rover's `/rover` PWM topic, with joystick passthrough. **Untested on hardware** |
+| GLIM bug fix | `glim/glim_ros_fix` | Patch + overlay for the GLIM 1.2.2 `/glim_ros/map` corruption |
 
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-colcon build --packages-select pcd2pgm
-source install/setup.bash
-```
-
-Then convert the saved GLIM dump directly (or pass an exported PCD file instead):
-
-```bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-ros2 run pcd2pgm pcd2pgm /absolute/path/to/saved/glim_dump "$REPO_ROOT/maps/nav2_map.pgm" \
-  --resolution 0.05 --min-z -0.3 --max-z 1.5
-```
-
-This produces `nav2_map.pgm` and `nav2_map.yaml`. The default height slice is a
-starting point only: GLIM's Z origin is established when mapping begins. Inspect the
-PCD and adjust `--min-z` and `--max-z` to retain walls, furniture, and posts while
-excluding the floor and ceiling. Empty cells are free by default; use `--unknown` if
-unobserved space must remain unknown. Run `ros2 run pcd2pgm pcd2pgm --help` for
-wall-thickening and noise-rejection options.
-
-Load the resulting YAML with Nav2:
+Minimal order (each line in its own terminal, after `source install/setup.bash`):
 
 ```bash
-ros2 launch nav2_bringup bringup_launch.py \
-  map:="$REPO_ROOT/maps/nav2_map.yaml" use_sim_time:=False
+ros2 launch livox_ros_driver2 rviz_MID360_launch.py
+ros2 launch lidar_angle_filter angle_filter.launch.py
+ros2 launch kratos_nav nav.launch.py                 # BEFORE GLIM (static TF)
+# GLIM (section 2.3; source the glim_ros_fix overlay last)
+ros2 run pcd2pgm pcd2pgm_node --ros-args \
+  --params-file "$(ros2 pkg prefix pcd2pgm)/share/pcd2pgm/config/pcd2pgm_live.yaml"
+# ...drive and tag:  ros2 service call /add_waypoint waypoint_interfaces/srv/AddWaypoint "{name: wp1}"
+ros2 run kratos_nav waypoint_mission.py --ros-args -p waypoints:="['wp1','wp2']"
 ```
+
+**Placeholders to measure on the rover before trusting any of this:**
+
+- `lidar_z` (0.60 m). It appears in three files: `nav.launch.py`, `nav2_params.yaml`
+  and `pcd2pgm_live.yaml`.
+- The robot footprint in `nav2_params.yaml`.
+- `track_width` / `max_wheel_speed` in `rover_bridge.py`.
+
+pcd2pgm has **no command-line converter**. To get a Nav2 map file from a saved
+session, export the dump to PCD (section 5), run `pcd2pgm_node` in file mode
+(`config/pcd2pgm.yaml`, set `pcd_file`), and save `/map` with
+`ros2 run nav2_map_server map_saver_cli -f <name>`. See
+[`src/pcd2pgm/README.md`](src/pcd2pgm/README.md).
 
 ## 7. Repository layout
 
@@ -564,7 +615,13 @@ ros2 launch nav2_bringup bringup_launch.py \
 | `glim/glim_config/` | MID-360 GLIM CPU and GPU configuration files |
 | `glim/glim_ros.rviz` | Preconfigured live GLIM RViz layout |
 | `glim/README.md` | Compact GLIM command reference and configuration notes |
-| `src/pcd2pgm/` | GLIM PCD to Nav2 PGM/YAML command-line converter |
+| `glim/glim_ext_addon/` | `waypoint_manager` GLIM extension, `waypoint_interfaces`, `glim_dump_export` |
+| `glim/glim_ros_fix/` | Patch + overlay build for the GLIM 1.2.2 `/glim_ros/map` bug |
+| `src/pcd2pgm/` | Point cloud -> `OccupancyGrid` node; live mode follows `/glim_ros/map` on a fixed grid |
+| `src/kratos_nav/` | Nav2 config/launch, `waypoint_mission.py`, `rover_bridge.py`, hardware-free tests |
+| `docs/` | Mission overview, live-test runbooks, design notes |
+| `AGENTS.md` | Orientation for AI assistants and reviewers (`CLAUDE.md` points to it) |
+| `src/FAST_LIO/` | FAST-LIO2 (earlier approach; not used by the GLIM pipeline) |
 | `src/lidar_angle_filter/` | Front/rear antenna-sector PointCloud2 filter |
 | `src/livox_ros_driver2/` | Livox ROS 2 driver source and MID-360 network configuration |
 | `maps/` | Local GLIM dump storage; generated at runtime and ignored by Git |

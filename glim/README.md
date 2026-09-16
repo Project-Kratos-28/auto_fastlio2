@@ -13,6 +13,30 @@ For first-time installation, driver building, and network setup, see the root
 |---|---|
 | `glim_config/` | GLIM configuration files; keep the complete directory together |
 | `glim_ros.rviz` | RViz layout with the GLIM points, map, odometry, and TF displays |
+| `glim_ext_addon/` | `waypoint_manager` GLIM extension, its `waypoint_interfaces`, and `glim_dump_export` |
+| `glim_ros_fix/` | Patch + build steps for the GLIM 1.2.2 `/glim_ros/map` corruption bug. **Required** when pcd2pgm/Nav2 consume `/glim_ros/map` |
+
+## Frames: `base_frame_id` is `base_link`
+
+`glim_config/config_ros.json` sets `"base_frame_id": "base_link"`, so GLIM publishes
+`map -> odom -> base_link` for Nav2. To do that, GLIM looks up `livox_frame -> base_link`
+on every frame (`rviz_viewer.cpp`). **Something must publish that static transform,
+ideally before GLIM starts:**
+
+- For the full mission, `ros2 launch kratos_nav nav.launch.py` publishes it. Start that first.
+- For GLIM on its own, run:
+  ```bash
+  ros2 run tf2_ros static_transform_publisher --z 0.60 --frame-id base_link --child-frame-id livox_frame
+  ```
+  0.60 is the placeholder LiDAR height. Use the same value as `lidar_z` in `nav.launch.py`.
+
+Without it, GLIM logs `Failed to lookup transform from livox_frame to base_link` every
+frame and publishes no `odom -> base_link`. Mapping itself still works. The TF appears
+as soon as the static transform does.
+
+`extension_modules` loads `libwaypoint_manager.so`. Build `waypoint_manager` in this
+workspace and `source install/setup.bash` before starting GLIM (see
+[`glim_ext_addon/README.md`](glim_ext_addon/README.md)).
 
 ## CPU and GPU selection
 
@@ -79,11 +103,13 @@ This publishes `/livox/lidar_filtered` for GLIM and removes 30-degree-wide secto
 centered on the LiDAR +X and -X axes. Adjust `front_center_deg` in
 `src/lidar_angle_filter/config/angle_filter.yaml` if LiDAR +X is not rover-forward.
 
-Terminal 3 -- GLIM, CPU/default launch:
+Terminal 3 -- GLIM, CPU/default launch (start the `base_link -> livox_frame`
+static TF first, see "Frames" above):
 
 ```bash
 cd /path/to/auto_fastlio2
 source /opt/ros/humble/setup.bash
+source install/setup.bash          # waypoint_manager (+ glim_ros_fix overlay if built)
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 ros2 run glim_ros glim_rosnode --ros-args \
@@ -141,6 +167,7 @@ ros2 topic hz /livox/lidar_filtered
 ros2 topic hz /livox/imu
 ros2 topic hz /glim_ros/odom
 ros2 topic echo /glim_ros/odom --once --field pose.pose
+ros2 run tf2_ros tf2_echo map base_link      # GLIM pose (needs the static TF above)
 ros2 run tf2_ros tf2_echo map livox_frame
 ```
 
@@ -178,7 +205,7 @@ entirely. Build it alongside `waypoint_manager` (see
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/glim_ext_ws/install/setup.bash
+source install/setup.bash
 ros2 run glim_dump_export glim_dump_export /path/to/saved/glim_dump /path/to/map.pcd "$(realpath glim_config)"
 ```
 

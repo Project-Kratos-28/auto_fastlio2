@@ -232,6 +232,9 @@ public:
     for (const auto& wp : waypoints) {
       res->names.push_back(wp.name);
     }
+    for (const auto& pwp : pending_waypoints) {
+      res->names.push_back(pwp.name + " (pending)");
+    }
   }
 
   void save_waypoints_cb(
@@ -244,12 +247,14 @@ public:
     }
     const bool ok = write_yaml(path);
     res->success = ok;
-    res->message = ok ? ("saved " + std::to_string(waypoints.size()) + " waypoints to " + path) : ("failed to open " + path);
+    res->message = ok ? ("saved " + std::to_string(waypoints.size()) + " waypoints (" +
+                          std::to_string(pending_waypoints.size()) + " pending) to " + path)
+                       : ("failed to open " + path);
   }
 
   void autosave() {
     std::lock_guard<std::mutex> lk(mtx);
-    if (waypoints.empty()) {
+    if (waypoints.empty() && pending_waypoints.empty()) {
       return;
     }
     write_yaml(autosave_path);
@@ -291,10 +296,30 @@ public:
       yml << YAML::EndMap;
     }
     yml << YAML::EndSeq;
+
+    // Waypoints tagged inside the still-forming submap have no submap
+    // reference yet (bind_pending_waypoints_locked() hasn't run for them) -
+    // without this, ending a mapping session right after tagging one drops
+    // it silently, since it never enters `waypoints`. Persist the raw
+    // odometry pose as a best-effort fallback: not loop-closure-corrected,
+    // but recoverable instead of lost.
+    yml << YAML::Key << "pending_waypoints" << YAML::Value << YAML::BeginSeq;
+    for (const auto& pwp : pending_waypoints) {
+      const Eigen::Vector3d t = pwp.T_odom_sensor.translation();
+      const Eigen::Quaterniond q = Eigen::Quaterniond(pwp.T_odom_sensor.linear()).normalized();
+
+      yml << YAML::BeginMap;
+      yml << YAML::Key << "name" << YAML::Value << pwp.name;
+      yml << YAML::Key << "stamp" << YAML::Value << pwp.stamp;
+      yml << YAML::Key << "odom_xyz" << YAML::Value << YAML::Flow << std::vector<double>{t.x(), t.y(), t.z()};
+      yml << YAML::Key << "odom_qxyzw" << YAML::Value << YAML::Flow << std::vector<double>{q.x(), q.y(), q.z(), q.w()};
+      yml << YAML::EndMap;
+    }
+    yml << YAML::EndSeq;
     yml << YAML::EndMap;
 
     out << yml.c_str();
-    logger->info("wrote {} waypoints to {}", waypoints.size(), path);
+    logger->info("wrote {} waypoints ({} pending) to {}", waypoints.size(), pending_waypoints.size(), path);
     return true;
   }
 
