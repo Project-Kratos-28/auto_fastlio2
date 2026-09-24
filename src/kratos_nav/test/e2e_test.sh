@@ -14,7 +14,7 @@ LOG_DIR="${E2E_LOG_DIR:-/tmp/kratos_nav_e2e}"
 rm -rf "$LOG_DIR"; mkdir -p "$LOG_DIR"
 
 chmod +x "$DIR/../scripts/waypoint_mission.py"
-source /opt/ros/humble/setup.bash
+source /opt/ros/${ROS_DISTRO:-jazzy}/setup.bash
 # Workspaces that provide waypoint_interfaces and kratos_nav. Defaults are the
 # VM layout; override with e.g. KRATOS_SETUP="/path/to/auto_fastlio2/install/setup.bash".
 for f in ${KRATOS_SETUP:-$HOME/Kratos/glim_ext_ws/install/setup.bash $HOME/Kratos/kratos_nav_ws/install/setup.bash}; do
@@ -42,7 +42,8 @@ done
 
 MISSION_RC=1
 if [ "$NAV2_OK" = "1" ]; then
-  timeout -s INT 240 ros2 run kratos_nav waypoint_mission.py > "$LOG_DIR/mission.log" 2>&1
+  # MISSION_ARGS: extra waypoint_mission.py arguments, e.g. MISSION_ARGS="-p mode:=through"
+  timeout -s INT 240 ros2 run kratos_nav waypoint_mission.py ${MISSION_ARGS:+--ros-args $MISSION_ARGS} > "$LOG_DIR/mission.log" 2>&1
   MISSION_RC=$?
   echo "mission exit code: $MISSION_RC"
 fi

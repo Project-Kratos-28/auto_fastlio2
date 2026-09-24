@@ -9,7 +9,7 @@ install(DIRECTORY launch config behavior_trees
   DESTINATION share/${PROJECT_NAME})
 
 # Python nodes, installed so `ros2 run kratos_nav <script>.py` finds them.
-install(PROGRAMS scripts/waypoint_mission.py scripts/rover_bridge.py
+install(PROGRAMS scripts/waypoint_mission.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

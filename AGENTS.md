@@ -6,7 +6,8 @@ working in this repo.
 ## What this repo is
 
 `auto_fastlio2` is Project Kratos's autonomy workspace (ROS 2 Humble, Ubuntu
-22.04, Livox MID-360). The name is historical. **FAST-LIO2 is no longer used.**
+22.04, Livox MID-360). The `jazzy-nvblox` branch ports it to ROS 2 Jazzy on the
+Jetson AGX Orin and adds ZED 2i + nvblox obstacles: read `docs/NVBLOX_JAZZY.md`. The name is historical.
 The active stack is:
 
 1. **GLIM** (apt `ros-humble-glim-ros` 1.2.2): SLAM and localization.
@@ -18,22 +19,17 @@ The active stack is:
 4. **kratos_nav** (`src/kratos_nav`):
    - Nav2 config
    - `waypoint_mission.py` (autonomous mission)
-   - `rover_bridge.py` (`/cmd_vel` → wheel PWM)
 5. Also used: `src/livox_ros_driver2` (driver) and `src/lidar_angle_filter`
    (masks the rover body out of the scan).
 
-Legacy code, not used: `src/FAST_LIO`, and the FAST-LIO sections of the root
-`README.md`.
-
-**Out of scope:** the rover drive stack (`drive.py`, ESP32 firmware) is in a
-separate repo (ARC_26) that this team doesn't own. Don't propose changes to it
-here. Report drive-side problems as notes.
+**Scope ends at `/cmd_vel`.** Nav2 publishes it; whatever drives the wheels
+(drive stack, motor controller) is outside this repo.
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `src/kratos_nav/` | Nav2 launch/params/BTs, mission and bridge scripts, hardware-free tests |
+| `src/kratos_nav/` | Nav2 launch/params/BTs, mission script, hardware-free tests |
 | `src/pcd2pgm/` | Fork of LihanChen2004/pcd2pgm plus live mode (`config/pcd2pgm_live.yaml`), standalone test suite in `test/` |
 | `src/lidar_angle_filter/` | Front/back sector mask for the LiDAR (gtest) |
 | `glim/glim_config/` | GLIM JSON config (`base_frame_id: base_link`, CPU modules) |
@@ -51,7 +47,6 @@ colcon build --symlink-install \
 source install/setup.bash
 
 colcon test --packages-select waypoint_manager lidar_angle_filter && colcon test-result --verbose
-python3 src/kratos_nav/test/test_rover_bridge.py
 PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/test/run_all.sh
 KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh
 KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.sh
@@ -65,14 +60,19 @@ KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.
 
 ## Invariants (breaking these fails silently in the field)
 
-- **LiDAR height `lidar_z` is in three places and must match:**
+- **LiDAR height `lidar_z` is in four places and must match:**
   - `src/kratos_nav/launch/nav.launch.py` (arg `lidar_z`)
   - `src/kratos_nav/config/nav2_params.yaml` (`min/max_obstacle_height`, twice)
   - `src/pcd2pgm/config/pcd2pgm_live.yaml` (`thre_z_min/max`)
+  - `src/kratos_perception/launch/perception.launch.py` (arg `lidar_z`; nvblox's
+    obstacle band is computed from it) — Jazzy/nvblox branch, see `docs/NVBLOX_JAZZY.md`
 
   The heights are relative to GLIM's `map` z=0, which is the LiDAR's start
   height, not the ground.
-- **The TF chain is `map → odom → base_link → livox_frame`.**
+- **The TF chain is `map → odom → base_link → {livox_frame, zed_camera_link}`.**
+  - Both mount links are static, from `nav.launch.py`. The ZED must never publish TF
+    (tracking off in `kratos_perception/config/zed2i_glim.yaml`).
+  - nvblox maps in `odom`; its `nvblox_layer` is in the local costmap only.
   - GLIM publishes the first two links.
   - The static `base_link → livox_frame` comes from `nav.launch.py` (or a
     manual `static_transform_publisher`).
@@ -94,12 +94,9 @@ KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.
     `found=False` from `/get_waypoint`.
   - Callers that consume the list must strip the suffix (see
     `waypoint_mission.py`).
-- **Only `rover_bridge.py` writes `/rover` during a mission.** `drive.py` is
-  remapped to `/rover_joy`.
-  - The bridge must keep publishing zeros on stale input and on shutdown.
 - **ROS 2 Humble rclpy scripts:**
   - Use `SignalHandlerOptions.NO` plus explicit SIGINT/SIGTERM handlers, so
-    cleanup (cancel goal, zero wheels) can still publish.
+    cleanup (cancel the Nav2 goal) can still run.
   - After `spin_until_future_complete` times out, poll `future.done()`.
     Don't rely on `add_done_callback`.
 - **The VM is the runtime.** Its workspaces (`~/Kratos/*_ws`) hold copies of
@@ -111,15 +108,13 @@ KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.
 - **Placeholders, not bugs (unless the reason is wrong):**
   - `lidar_z` 0.60
   - the 0.74 m square footprint
-  - `track_width` 0.80
-  - `max_wheel_speed` 1.0
   - the 50x50 m grid
-- **Not verified on hardware:** `rover_bridge.py` and the full mission. The
+- **Not verified on hardware:** the full mission. The
   rest was verified on the VM with a real LiDAR (GLIM, waypoints, pcd2pgm) or
   with fakes (`fake_glim.py`).
 - **Not tracked, never commit:** `build/`, `install/`, `log/`, `*.pcd`,
   `*.pgm`, `maps/`, GLIM dumps.
-- `src/pcd2pgm/config/pcd2pgm.yaml` is upstream file mode with a teammate's
-  path, and isn't used by the mission.
+- `src/pcd2pgm/config/pcd2pgm.yaml` is file mode (set `pcd_file`), and isn't
+  used by the mission.
 - **Writing docs:** keep them short and concrete, with commands that can be
   pasted. The VM paths in `docs/` are intentional.

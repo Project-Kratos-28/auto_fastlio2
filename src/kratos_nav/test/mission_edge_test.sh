@@ -8,7 +8,7 @@ export ROS_DOMAIN_ID=45
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${EDGE_LOG_DIR:-/tmp/kratos_nav_edge}"
 rm -rf "$LOG_DIR"; mkdir -p "$LOG_DIR"
-source /opt/ros/humble/setup.bash
+source /opt/ros/${ROS_DISTRO:-jazzy}/setup.bash
 # Workspaces that provide waypoint_interfaces and kratos_nav. Defaults are the
 # VM layout; override with e.g. KRATOS_SETUP="/path/to/auto_fastlio2/install/setup.bash".
 for f in ${KRATOS_SETUP:-$HOME/Kratos/glim_ext_ws/install/setup.bash $HOME/Kratos/kratos_nav_ws/install/setup.bash}; do

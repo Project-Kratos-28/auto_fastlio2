@@ -175,10 +175,6 @@ if(ROS_EDITION STREQUAL "ROS1")
     RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
   )
 
-  install(DIRECTORY launch_ROS1/
-    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch_ROS1
-  )
-
   #---------------------------------------------------------------------------------------
   # end of CMakeList.txt
   #---------------------------------------------------------------------------------------

@@ -51,9 +51,7 @@ source ~/Kratos/auto_fastlio2/install/setup.bash
 ros2 launch livox_ros_driver2 rviz_MID360_launch.py
 ```
 
-- **Must be `rviz_MID360_launch.py`, never `msg_MID360_launch.py`.** `msg_` publishes Livox
-  CustomMsg (`xfer_format=1`); GLIM cannot read it. `rviz_` publishes `PointCloud2`
-  (`xfer_format=0`), which GLIM needs.
+- `rviz_MID360_launch.py` publishes `PointCloud2` (`xfer_format=0`), which GLIM needs.
 - This opens its own small RViz showing the raw cloud. Ignore it or close it — it will
   never show the GLIM map.
 
@@ -201,7 +199,6 @@ pcl_ply2pcd ~/Kratos/maps/<timestamp>/points.ply ~/Kratos/maps/<timestamp>/map.p
 | Nothing in viewer, `ros2 topic hz /livox/lidar` silent | Network not up → redo **Part 0** (dongle→bridge100, `.50` IP) |
 | `unknown initialization mode ROBUST` then segfault | Wrong config dir → must be `~/Kratos/glim_config` (built from `/opt/ros/humble/share/glim/config`, not the git clone) |
 | `TF_SELF_TRANSFORM` error flood | `publish_imu2lidar` not `false` in `config_ros.json` (it is set correctly in `~/Kratos/glim_config`) |
-| Driver runs but GLIM sees no points | Launched `msg_MID360_launch.py` instead of `rviz_MID360_launch.py` |
 | `/glim_ros/map` echo times out | Normal — it publishes every ~10 s and only when subscribed. Wait 30 s. |
 | Map "doubles up" / walls smear | Moved too fast, or IMU extrinsic off. Slow down; if persistent, re-check `T_lidar_imu` in `config_sensors.json`. |
 | RViz shows raw cloud only, no map | Opened the driver's RViz, not `~/Kratos/glim_ros2/rviz/glim_ros.rviz` |

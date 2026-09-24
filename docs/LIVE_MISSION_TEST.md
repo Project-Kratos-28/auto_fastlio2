@@ -1,6 +1,6 @@
 # Live test: tag waypoints with GLIM, then run them with Nav2
 
-This is the one doc for the live test. Where `NAV2_BRINGUP.md` disagrees with this doc, this doc is right.
+This is the one doc for the live test.
 
 > **Where the code lives.** Source of truth is this repo (`auto_fastlio2`). On the team VM
 > (`advaith@192.168.64.6`) the test still runs from these workspaces, which hold the
@@ -33,30 +33,7 @@ drive manually ──► GLIM maps + you tag wp1, wp2, ...      (GLIM never stop
 - If a loop closure moves a waypoint by more than 0.3 m, it re-sends the goal.
 - That's why it asks GLIM live instead of reading a saved file.
 
-## ⚠️ Read first: how the wheels get Nav2's commands
-
-Nav2 publishes `/cmd_vel`, but the drive team's `drive.py` (ARC_26 repo, not in this repo) only turns `/joy` into `/rover`, the ESP32's wheel topic. `src/kratos_nav/scripts/rover_bridge.py` (added 2026-09-16) is now the only node that writes `/rover`:
-
-```
-drive.py ──/rover_joy──► rover_bridge ──/rover──► ESP32
-Nav2     ──/cmd_vel────► rover_bridge
-```
-
-- **MANUAL** (the default at startup) passes the joystick through unchanged.
-- **AUTO** converts `/cmd_vel` to wheel PWM, open loop.
-- **Touching either stick in AUTO drops straight back to MANUAL.**
-- Stale input (Nav2 silent or `drive.py` dead for 0.5 s) becomes zeros.
-
-**Tested on the VM, not yet on hardware.**
-- The math has unit tests (`src/kratos_nav/test/test_rover_bridge.py`, 11/11).
-- Every mode was checked live under ROS, including zeros on Ctrl+C.
-- The real Nav2 e2e mission, run through the bridge in AUTO, produced correct forward and steering `/rover` commands.
-- Wheel direction and speed on the real rover are still unverified, so the order today is:
-
-1. Parts B and C (shadow mode) first, exactly as before.
-2. Part D (real autonomy) only after that, **wheels off the ground first**.
-
-**The ESP32 firmware on the rover holds its last `/rover` command forever if messages stop** (it has no timeout; that is the drive team's code, outside this repo). `rover_bridge.py` therefore publishes at 50 Hz and sends zeros on Ctrl+C, but if the bridge is killed hard (`kill -9`, VM freeze, network drop) the wheels keep their last speed. **Keep a hand on the rover's power switch in Part D.**
+The stack ends at Nav2's `/cmd_vel`; whatever drives the wheels subscribes to it.
 
 ## Already verified on the VM (no hardware)
 
@@ -83,12 +60,6 @@ Nav2     ──/cmd_vel────► rover_bridge
   Example: lidar_z 0.55 → min -0.35, max 1.25.
 
 - [ ] **Footprint.** Placeholder is 0.74 × 0.74 m. Fix `footprint` in `nav2_params.yaml` (2 places) if the rover is bigger.
-- [ ] **For Part D only: `track_width` and `max_wheel_speed`.**
-  - `track_width` is the distance between the left and right wheel centres. The placeholder is 0.80 m.
-  - `max_wheel_speed` is the ground speed at full PWM (255). The placeholder is 1.0 m/s.
-  - To measure it, drive straight at full trigger for 3 s and divide the distance by 3.
-  - Both are passed as `-p` arguments (step T8).
-- [ ] kratos_nav on the VM already contains `rover_bridge.py` and was rebuilt on 2026-09-16. Only rebuild again if you add another new file (command below).
 - [ ] **VM packages built.** If you edited a `.py`, `.yaml` or `.xml` in kratos_nav, you don't need to rebuild: it's a symlink install. You only need to rebuild if you add a new file:
   ```bash
   cd ~/Kratos/kratos_nav_ws && source /opt/ros/humble/setup.bash && source ~/Kratos/glim_ext_ws/install/setup.bash && colcon build --symlink-install
@@ -151,20 +122,6 @@ rviz2 -d /opt/ros/humble/share/nav2_bringup/rviz/nav2_default_view.rviz
 
 **T7: your commands.** Source humble, `glim_ext_ws` and `kratos_nav_ws` here; T7 is used for everything below.
 
-**T8: rover drive.** This replaces the usual `drive.py` start. Start the micro-ROS agent and `joy_node` as usual first.
-- `drive.py` runs wherever it normally runs, but with the remap below.
-- `rover_bridge.py` can run on the VM: it only needs to be on the same ROS network and `ROS_DOMAIN_ID` as the agent.
-```bash
-# where drive.py normally runs:
-ros2 run drive_controls drive.py --ros-args -r /rover:=/rover_joy
-# on the VM (humble + kratos_nav_ws sourced):
-ros2 run kratos_nav rover_bridge.py --ros-args -p track_width:=0.80 -p max_wheel_speed:=1.0
-```
-- The two nodes run in separate terminals.
-- The `-r /rover:=/rover_joy` remap is essential. Without it, `drive.py` and the bridge both write `/rover` and the wheels stutter.
-- Check: `ros2 topic info /rover` must show exactly **1** publisher.
-- The bridge starts in MANUAL, so RC driving works exactly as before.
-
 ## 2. Health checks (stop at the first failure)
 
 | # | Command (T7) | Pass looks like |
@@ -204,7 +161,7 @@ If the floor is all obstacles (6), `lidar_z` is wrong. See section 0.
 
 ## 4. Part B: mission, rover stationary (proves the whole chain)
 
-Leave `rover_bridge` in MANUAL (the default), so the rover won't move by itself (see ⚠️).
+Keep the wheels disconnected from `/cmd_vel`, so the rover won't move by itself.
 
 ```bash
 ros2 run kratos_nav waypoint_mission.py --ros-args -p waypoints:="['wp1','wp2']"
@@ -234,21 +191,8 @@ Pass:
 
 If you drive too slowly (< 0.5 m in 15 s) it aborts. Just rerun it.
 
-## 5b. Part D: real autonomy (only after C passed)
+Real autonomy is the same mission with the wheels listening to `/cmd_vel`.
 
-1. **Wheels off the ground.** Hand over to Nav2:
-   ```bash
-   ros2 service call /rover_bridge/set_auto std_srvs/srv/SetBool "{data: true}"
-   ```
-   T8 prints `AUTO (service)`.
-2. Run the Part B mission.
-   - Wheels should spin forward, and the side on the inside of a turn should go slower.
-   - If forward/back or left/right are swapped, stop and note it; don't fix it on the spot.
-3. Nudge a stick. T8 must print `MANUAL (stick override)` and the wheels must follow the joystick again.
-4. Ctrl+C the mission. The wheels must stop within 0.5 s (bridge timeout).
-5. **On the ground**, at a slow pace: `set_auto true`, then run the mission, with a hand on a stick the whole time.
-   - If the rover barely creeps, the motors stall at low PWM. Restart the bridge with `-p min_pwm:=60` and raise it until it moves.
-   - If it overshoots its turns, `max_wheel_speed` is too low.
 
 ## 6. Things to write down during the test
 
@@ -277,12 +221,9 @@ If you drive too slowly (< 0.5 m in 15 s) it aborts. Just rerun it.
 | `failed to create plan` | The tagged heading is impossible in a tight spot, or the goal is inside inflation. Re-tag in an open spot, facing the travel direction |
 | T5: `empty after PassThrough/RadiusOutlier - keeping the previous /map` | pcd2pgm got a cloud with nothing in the height band. It deliberately keeps the old `/map` instead of wiping it (fixed 2026-09-15). Once is fine. If it repeats every 10 s, `lidar_z` / `thre_z_*` are wrong (section 0) |
 | Straight "sheets" or walls in `/map` / RViz where nothing exists | GLIM was started without the overlay. Check `ros2 pkg prefix glim_ros` in a T4-sourced shell; restart GLIM with `glim_ros_fix_ws` sourced last (before tagging!) |
-| Part D: wheels stutter / twitch between joystick and Nav2 | `drive.py` isn't remapped, so two nodes write `/rover`. Check `ros2 topic info /rover` (must be 1 publisher) |
-| Part D: `AUTO` but wheels never move | Nav2 isn't publishing `/cmd_vel` (`ros2 topic hz /cmd_vel`), or the motors stall at low PWM: raise `min_pwm` |
-| Part D: bridge flips back to `MANUAL (stick override)` by itself | A stick rests past 0.5 (worn joystick). Raise `-p override_deadzone:=0.7` |
 | `Live map update took` keeps growing to seconds | The map is getting big. Note the number, and tell the team: the outlier filter runs on the whole map |
 | Costmap warnings about dropped LiDAR messages / TF extrapolation | GLIM is lagging. Note it; raise `transform_tolerance` in both costmaps from 0.3 |
 
 ## Stop everything
 
-`set_auto false` (if used), then Ctrl+C in T7 → T5 → T4 → T3 → T2 → T1. Before killing GLIM, save waypoints if you want them (step 3.6).
+Ctrl+C in T7 → T5 → T4 → T3 → T2 → T1. Before killing GLIM, save waypoints if you want them (step 3.6).

@@ -1,7 +1,7 @@
 pcd2pgm:
   ros__parameters:
-    # Path to your FAST_LIO generated point cloud
-    pcd_file: "/home/eepy/ros2_livox_ws/src/FAST_LIO/PCD/scans.pcd"
+    # Point cloud to convert (file mode), e.g. a GLIM dump exported with glim_dump_export
+    pcd_file: "/path/to/map.pcd"
     
     # 2D Grid map resolution (meters per pixel, 0.05 = 5cm per pixel)
     map_resolution: 0.05

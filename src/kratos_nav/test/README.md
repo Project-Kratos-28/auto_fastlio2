@@ -18,8 +18,7 @@ By default the script sources `~/Kratos/glim_ext_ws/install/setup.bash` and
 `~/Kratos/kratos_nav_ws/install/setup.bash` (the VM layout). Elsewhere, point it
 at the workspace(s) that contain `waypoint_interfaces` and `kratos_nav`:
 `KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh`.
-The same applies to `mission_edge_test.sh`. `test_rover_bridge.py` needs only
-Python: `python3 src/kratos_nav/test/test_rover_bridge.py`.
+The same applies to `mission_edge_test.sh`.
 
 Only one instance at a time - the VM is shared (4 cores / 7.7 GB, other
 agents run here too). Logs go to `/tmp/kratos_nav_e2e/` (`fake.log`,
@@ -73,9 +72,4 @@ footprint, not exact.
 
 | Test | What it proves | Needs |
 |---|---|---|
-| `python3 test_rover_bridge.py` | `rover_bridge.py` math: cmd_vel → left/right PWM, saturation keeps curvature, `min_pwm`, never one zero side (firmware quirk), stick override detection. 11 tests | plain Python, runs on the Mac too |
 | `bash mission_edge_test.sh` | `waypoint_mission.py` never leaves the rover driving: (A) Nav2 accepts a goal after the 5 s timeout → it gets cancelled; (B) Ctrl+C mid-goal → goal cancelled. Uses `fake_glim.py` + `fake_nav_server.py` (no real Nav2), domain 45, logs in `/tmp/kratos_nav_edge/` | VM |
-
-`rover_bridge.py` was also checked live on the VM (not scripted here):
-- Every mode: manual passthrough, stale input → zeros, AUTO mapping, stick override, button toggle, zeros on Ctrl+C.
-- Real chain: `e2e_test.sh` with the bridge in AUTO produced forward, differentially steered `/rover` commands, and zeros at both ends.

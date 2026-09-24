@@ -2,10 +2,13 @@
 
 ROS 2 Humble workspace for Project Kratos rover autonomy with a Livox MID-360.
 It covers real-time LiDAR-inertial SLAM with GLIM, submap-relative waypoints,
-a live 2D occupancy grid, and Nav2 navigation to the tagged waypoints.
-(The repo name is historical. FAST-LIO2 is still in `src/FAST_LIO` but is not
-part of the active pipeline.)
+a live 2D occupancy grid, and Nav2 navigation to the tagged waypoints, ending at
+`/cmd_vel`. (The repo name is historical.)
 
+> **Jazzy / Orin + nvblox (branch `jazzy-nvblox`):** `./start.sh` runs everything; see
+> [`docs/NVBLOX_JAZZY.md`](docs/NVBLOX_JAZZY.md).
+> The Humble instructions below still describe the VM setup.
+>
 > **Start here for the autonomous mission:** [`docs/README.md`](docs/README.md).
 > It covers the mission, the runbooks, and where every piece lives.
 > **AI assistants / code reviewers:** read [`AGENTS.md`](AGENTS.md) first.
@@ -269,8 +272,7 @@ ros2 launch livox_ros_driver2 rviz_MID360_launch.py
 The Livox driver does not perform CUDA processing; the NVIDIA prefix accelerates the
 RViz window started by this launch file.
 
-Use `rviz_MID360_launch.py`, not `msg_MID360_launch.py`. GLIM consumes
-`sensor_msgs/msg/PointCloud2`; the `msg_` launch publishes Livox `CustomMsg` data.
+`rviz_MID360_launch.py` publishes `sensor_msgs/msg/PointCloud2`, which GLIM consumes.
 
 Before starting GLIM, confirm both streams:
 
@@ -579,7 +581,6 @@ terminal-by-terminal bring-up, checks and troubleshooting are in
 | Waypoints | `glim/glim_ext_addon/waypoint_manager` | GLIM extension: `/add_waypoint`, `/get_waypoint`, `/list_waypoints`, `/save_waypoints`. Poses ride along with loop closure |
 | Live 2D map | `src/pcd2pgm` (live mode) | `/glim_ros/map` -> filters -> fixed 50x50 m, 0.05 m `/map` (`OccupancyGrid`, transient_local) |
 | Navigation | `src/kratos_nav` | `nav.launch.py`: Nav2 without map_server/AMCL plus the static `base_link -> livox_frame` TF. `waypoint_mission.py`: drives to each GLIM waypoint in order |
-| Wheel interface | `src/kratos_nav/scripts/rover_bridge.py` | `/cmd_vel` -> the rover's `/rover` PWM topic, with joystick passthrough. **Untested on hardware** |
 | GLIM bug fix | `glim/glim_ros_fix` | Patch + overlay for the GLIM 1.2.2 `/glim_ros/map` corruption |
 
 Minimal order (each line in its own terminal, after `source install/setup.bash`):
@@ -600,7 +601,6 @@ ros2 run kratos_nav waypoint_mission.py --ros-args -p waypoints:="['wp1','wp2']"
 - `lidar_z` (0.60 m). It appears in three files: `nav.launch.py`, `nav2_params.yaml`
   and `pcd2pgm_live.yaml`.
 - The robot footprint in `nav2_params.yaml`.
-- `track_width` / `max_wheel_speed` in `rover_bridge.py`.
 
 pcd2pgm has **no command-line converter**. To get a Nav2 map file from a saved
 session, export the dump to PCD (section 5), run `pcd2pgm_node` in file mode
@@ -618,10 +618,9 @@ session, export the dump to PCD (section 5), run `pcd2pgm_node` in file mode
 | `glim/glim_ext_addon/` | `waypoint_manager` GLIM extension, `waypoint_interfaces`, `glim_dump_export` |
 | `glim/glim_ros_fix/` | Patch + overlay build for the GLIM 1.2.2 `/glim_ros/map` bug |
 | `src/pcd2pgm/` | Point cloud -> `OccupancyGrid` node; live mode follows `/glim_ros/map` on a fixed grid |
-| `src/kratos_nav/` | Nav2 config/launch, `waypoint_mission.py`, `rover_bridge.py`, hardware-free tests |
+| `src/kratos_nav/` | Nav2 config/launch, `waypoint_mission.py`, hardware-free tests |
 | `docs/` | Mission overview, live-test runbooks, design notes |
 | `AGENTS.md` | Orientation for AI assistants and reviewers (`CLAUDE.md` points to it) |
-| `src/FAST_LIO/` | FAST-LIO2 (earlier approach; not used by the GLIM pipeline) |
 | `src/lidar_angle_filter/` | Front/rear antenna-sector PointCloud2 filter |
 | `src/livox_ros_driver2/` | Livox ROS 2 driver source and MID-360 network configuration |
 | `maps/` | Local GLIM dump storage; generated at runtime and ignored by Git |

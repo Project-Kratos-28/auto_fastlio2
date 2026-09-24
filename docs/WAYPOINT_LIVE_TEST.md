@@ -41,7 +41,7 @@ source /opt/ros/humble/setup.bash
 source ~/Kratos/auto_fastlio2/install/setup.bash
 ros2 launch livox_ros_driver2 rviz_MID360_launch.py
 ```
-Must be `rviz_MID360_launch.py`, not `msg_MID360_launch.py`. Ignore the small RViz
+Ignore the small RViz
 window this opens — it only shows the raw cloud, not the map.
 
 **Sanity check (VM, throwaway terminal):**

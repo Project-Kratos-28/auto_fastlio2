@@ -9,31 +9,11 @@ COLCON_IGNORE
 .built_by
 .colcon_install_layout
 
-# ==============================================================================
-# FAST-LIO & SLAM Outputs (PCDs, Trajectories, & Runtime Logs)
-# ==============================================================================
-# FAST_LIO log outputs and temporary text dumps
-src/FAST_LIO/Log/*.txt
-src/FAST_LIO/Log/*.csv
-src/FAST_LIO/Log/*.png
-src/FAST_LIO/Log/*.pdf
-pos_log.txt
-mat_pre.txt
-mat_out.txt
-dbg.txt
-imu.txt
-
-# Preserve important analysis scripts and documentation in Log folder
-!src/FAST_LIO/Log/fast_lio_time_log_analysis.m
-!src/FAST_LIO/Log/plot.py
-!src/FAST_LIO/Log/guide.md
-
 # Point Cloud data files (scans, maps, dumps)
 *.pcd
 *.ply
 *.las
 *.laz
-src/FAST_LIO/PCD/*.pcd
 
 # 2D Occupancy Grid Maps (Nav2)
 map.pgm
@@ -144,4 +124,9 @@ imgui.ini
 frames_*.pdf
 frames_*.gv
 /test_waypoints.yaml
+maps/
+
+# kratos_glim (Jazzy + nvblox)
+.zed/
+.home/
 maps/

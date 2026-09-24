@@ -11,7 +11,7 @@ CONFIG="$SCRIPT_DIR/../config/pcd2pgm_live.yaml"
 # PCD2PGM_SETUP=/path/to/auto_fastlio2/install/setup.bash
 SETUP="${PCD2PGM_SETUP:-$HOME/Kratos/pcd2pgm_live_ws/install/setup.bash}"
 
-source /opt/ros/humble/setup.bash
+source /opt/ros/${ROS_DISTRO:-jazzy}/setup.bash
 source "$SETUP"
 
 LOGDIR="$(mktemp -d /tmp/pcd2pgm_livetest.XXXXXX)"

@@ -1,10 +1,12 @@
-# Nav2 params for Kratos on a LIVE GLIM map (ROS 2 Humble).
+# Nav2 params for Kratos on a LIVE GLIM map (ROS 2 Jazzy, Nav2 1.3).
 #
 # Who publishes what (nothing here may duplicate it):
 #   GLIM            TF map -> odom -> base_link   (replaces AMCL + wheel odom)
 #   nav.launch.py   TF base_link -> livox_frame   (static, LiDAR mount)
 #   pcd2pgm live    /map  OccupancyGrid           (replaces map_server)
 #   driver          /livox/lidar  PointCloud2     (live obstacles)
+#   nvblox          /nvblox_node/static_map_slice (ZED 2i depth, near-field obstacles,
+#                   local costmap only; kratos_perception/launch/perception.launch.py)
 #
 # HEIGHT NUMBERS: GLIM's odom/map origin is where the LiDAR started, NOT the
 # ground. We put base_link ON THE GROUND directly under the LiDAR, so
@@ -27,62 +29,19 @@ bt_navigator:
     # a missing key silently falls back to the stock trees (which need Spin).
     default_nav_to_pose_bt_xml: "set_by_nav_launch"
     default_nav_through_poses_bt_xml: "set_by_nav_launch"
-    plugin_lib_names:
-      - nav2_compute_path_to_pose_action_bt_node
-      - nav2_compute_path_through_poses_action_bt_node
-      - nav2_smooth_path_action_bt_node
-      - nav2_follow_path_action_bt_node
-      - nav2_spin_action_bt_node
-      - nav2_wait_action_bt_node
-      - nav2_assisted_teleop_action_bt_node
-      - nav2_back_up_action_bt_node
-      - nav2_drive_on_heading_bt_node
-      - nav2_clear_costmap_service_bt_node
-      - nav2_is_stuck_condition_bt_node
-      - nav2_goal_reached_condition_bt_node
-      - nav2_goal_updated_condition_bt_node
-      - nav2_globally_updated_goal_condition_bt_node
-      - nav2_is_path_valid_condition_bt_node
-      - nav2_initial_pose_received_condition_bt_node
-      - nav2_reinitialize_global_localization_service_bt_node
-      - nav2_rate_controller_bt_node
-      - nav2_distance_controller_bt_node
-      - nav2_speed_controller_bt_node
-      - nav2_truncate_path_action_bt_node
-      - nav2_truncate_path_local_action_bt_node
-      - nav2_goal_updater_node_bt_node
-      - nav2_recovery_node_bt_node
-      - nav2_pipeline_sequence_bt_node
-      - nav2_round_robin_node_bt_node
-      - nav2_transform_available_condition_bt_node
-      - nav2_time_expired_condition_bt_node
-      - nav2_path_expiring_timer_condition
-      - nav2_distance_traveled_condition_bt_node
-      - nav2_single_trigger_bt_node
-      - nav2_goal_updated_controller_bt_node
-      - nav2_is_battery_low_condition_bt_node
-      - nav2_navigate_through_poses_action_bt_node
-      - nav2_navigate_to_pose_action_bt_node
-      - nav2_remove_passed_goals_action_bt_node
-      - nav2_planner_selector_bt_node
-      - nav2_controller_selector_bt_node
-      - nav2_goal_checker_selector_bt_node
-      - nav2_controller_cancel_bt_node
-      - nav2_path_longer_on_approach_bt_node
-      - nav2_wait_cancel_bt_node
-      - nav2_spin_cancel_bt_node
-      - nav2_back_up_cancel_bt_node
-      - nav2_assisted_teleop_cancel_bt_node
-      - nav2_drive_on_heading_cancel_bt_node
-      - nav2_is_battery_charging_condition_bt_node
+    wait_for_service_timeout: 1000
+    action_server_result_timeout: 900.0
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+    # Jazzy adds Nav2's built-in BT plugins automatically. plugin_lib_names is only for
+    # custom plugins; listing the built-ins again (as the Humble file did) is not needed.
+    error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
 
-bt_navigator_navigate_through_poses_rclcpp_node:
-  ros__parameters:
-    use_sim_time: false
-
-bt_navigator_navigate_to_pose_rclcpp_node:
-  ros__parameters:
-    use_sim_time: false
 
 # ---------------------------------------------------------------------------
 # Controller: follows the path, outputs cmd_vel (linear.x + angular.z only).
@@ -98,7 +57,7 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     odom_topic: /glim_ros/odom
-    progress_checker_plugin: "progress_checker"
+    progress_checker_plugins: ["progress_checker"]   # Jazzy: list (Humble: progress_checker_plugin)
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
 
@@ -159,7 +118,17 @@ local_costmap:
       # y +-0.3). Measure the real rover, outermost points, plus ~5 cm.
       footprint: "[[0.37, 0.37], [0.37, -0.37], [-0.37, -0.37], [-0.37, 0.37]]"
       footprint_padding: 0.03
-      plugins: ["obstacle_layer", "inflation_layer"]
+      # nvblox_layer: ZED 2i depth fused by nvblox (2D ESDF slice of GLIM's odom frame).
+      # Sees what the MID-360 cannot: low obstacles within ~5 m (its beams only reach the
+      # ground ~4.9 m out at lidar_z 0.60) and anything closer than obstacle_min_range.
+      plugins: ["obstacle_layer", "nvblox_layer", "inflation_layer"]
+
+      nvblox_layer:
+        plugin: "nvblox::nav2::NvbloxCostmapLayer"
+        enabled: true
+        nav2_costmap_global_frame: odom      # = this costmap's global_frame and nvblox's global_frame
+        nvblox_map_slice_topic: "/nvblox_node/static_map_slice"
+        convert_to_binary_costmap: true      # slice distance <= 0 (inside an obstacle) -> lethal
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -251,7 +220,7 @@ planner_server:
     expected_planner_frequency: 1.0
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
       downsample_costmap: false
       downsampling_factor: 1
       tolerance: 0.5
@@ -297,15 +266,18 @@ smoother_server:
 behavior_server:
   ros__parameters:
     use_sim_time: false
-    costmap_topic: local_costmap/costmap_raw
-    footprint_topic: local_costmap/published_footprint
+    local_costmap_topic: local_costmap/costmap_raw         # Jazzy names (Humble: costmap_topic,
+    global_costmap_topic: global_costmap/costmap_raw       #   footprint_topic, global_frame)
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 10.0
     behavior_plugins: ["backup", "wait"]   # no spin, no drive_on_heading
     backup:
-      plugin: "nav2_behaviors/BackUp"
+      plugin: "nav2_behaviors::BackUp"
     wait:
-      plugin: "nav2_behaviors/Wait"
-    global_frame: odom
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.3
     simulate_ahead_time: 2.0

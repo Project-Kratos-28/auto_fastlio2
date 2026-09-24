@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Drive to GLIM waypoints, one at a time, with Nav2.
+"""Drive to GLIM waypoints with Nav2: one at a time (navigate_to_pose) or as one route
+(navigate_through_poses).
+
+Modes (parameter `mode`):
+  pose     (default) one navigate_to_pose goal per waypoint: stop at wp1, then plan to wp2, ...
+  through  one navigate_through_poses goal with all waypoints: a single route through them,
+           without stopping at each one. The behavior tree drops a waypoint once the rover is
+           within 0.7 m of it (RemovePassedGoals); its feedback says how many are left.
 
 Why not Nav2's own follow_waypoints?
   follow_waypoints takes a list of poses ONCE and never looks at them again.
@@ -14,8 +21,13 @@ Pose conversion:
   base_link. We look up the static livox_frame->base_link TF, apply it, and
   flatten to x, y, yaw (z, roll, pitch zeroed) because Nav2 is 2D.
 
+In both modes the waypoints are re-read from GLIM every refresh_period; if one that is still
+ahead moved more than replan_threshold, the goal is re-sent (through: with only the waypoints
+not yet passed).
+
 Usage:
   ros2 run kratos_nav waypoint_mission.py --ros-args -p waypoints:="['wp1','wp2']"
+  ros2 run kratos_nav waypoint_mission.py --ros-args -p mode:=through
   (no waypoints param = every waypoint GLIM lists, pending ones included:
    bound ones in tag order, then pending ones)
 """
@@ -26,7 +38,7 @@ import sys
 import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
@@ -50,7 +62,9 @@ class WaypointMission(Node):
         self.declare_parameter('waypoints', [''])
         self.declare_parameter('get_waypoint_service', '/get_waypoint')
         self.declare_parameter('list_waypoints_service', '/list_waypoints')
+        self.declare_parameter('mode', 'pose')   # pose | through
         self.declare_parameter('nav_action', 'navigate_to_pose')
+        self.declare_parameter('nav_through_action', 'navigate_through_poses')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('sensor_frame', 'livox_frame')
         self.declare_parameter('refresh_period', 2.0)
@@ -63,6 +77,9 @@ class WaypointMission(Node):
         self.get_wp = self.create_client(GetWaypoint, self.get_parameter('get_waypoint_service').value)
         self.list_wp = self.create_client(ListWaypoints, self.get_parameter('list_waypoints_service').value)
         self.nav = ActionClient(self, NavigateToPose, self.get_parameter('nav_action').value)
+        self.nav_through = ActionClient(
+            self, NavigateThroughPoses, self.get_parameter('nav_through_action').value)
+        self.poses_remaining = None   # navigate_through_poses feedback
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -140,8 +157,20 @@ class WaypointMission(Node):
         return None
 
     def send(self, goal):
-        """Send goal; returns (handle, result_future) or (None, None)."""
-        request = self.nav.send_goal_async(NavigateToPose.Goal(pose=goal))
+        """Send a navigate_to_pose goal; returns (handle, result_future) or (None, None)."""
+        return self.send_action(self.nav, NavigateToPose.Goal(pose=goal))
+
+    def send_through(self, goals):
+        """Send a navigate_through_poses goal; returns (handle, result_future) or (None, None)."""
+        self.poses_remaining = None
+        return self.send_action(self.nav_through, NavigateThroughPoses.Goal(poses=goals),
+                                feedback_callback=self.on_through_feedback)
+
+    def on_through_feedback(self, msg):
+        self.poses_remaining = msg.feedback.number_of_poses_remaining
+
+    def send_action(self, client, goal_msg, feedback_callback=None):
+        request = client.send_goal_async(goal_msg, feedback_callback=feedback_callback)
         handle = self.wait(request, 5.0)
         if handle is None:
             self.get_logger().error('Nav2 did not answer the goal request within 5 s')
@@ -201,6 +230,67 @@ class WaypointMission(Node):
                         goal, handle, result_future = fresh, new_handle, new_future
         return False
 
+    def go_through(self, names):
+        """One navigate_through_poses goal through all waypoints. Returns the names not reached."""
+        goals = []
+        for name in names:
+            goal = self.resolve_with_wait(name)
+            if goal is None:
+                self.get_logger().error(f"waypoint '{name}' not found in GLIM")
+                return names
+            goals.append(goal)
+        self.get_logger().info('-> through ' + ', '.join(
+            f"'{n}' ({g.pose.position.x:.2f}, {g.pose.position.y:.2f})" for n, g in zip(names, goals)))
+        handle, result_future = self.send_through(goals)
+        if handle is None:
+            return names
+
+        period = Duration(seconds=self.get_parameter('refresh_period').value)
+        threshold = self.get_parameter('replan_threshold').value
+        next_refresh = self.get_clock().now() + period
+        # names/goals always hold the waypoints of the goal Nav2 is working on; `passed` counts
+        # how many of them Nav2 has dropped as reached (from its poses-remaining feedback).
+        passed = 0
+
+        while rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.1)
+            self.cancel_late_goals()
+
+            if self.poses_remaining is not None:
+                now_passed = len(names) - self.poses_remaining
+                for name in names[passed:max(passed, now_passed)]:
+                    self.get_logger().info(f"reached '{name}'")
+                passed = max(passed, now_passed)
+
+            if result_future.done():
+                status = result_future.result().status
+                self.current_handle = None
+                if status == GoalStatus.STATUS_SUCCEEDED:
+                    for name in names[passed:]:
+                        self.get_logger().info(f"reached '{name}'")
+                    return []
+                self.get_logger().error(f'failed with {names[passed:]} left (status {status})')
+                return names[passed:]
+
+            if self.get_clock().now() >= next_refresh:
+                next_refresh = self.get_clock().now() + period
+                ahead = list(zip(names[passed:], goals[passed:]))
+                fresh = [(n, self.resolve(n)) for n, _ in ahead]
+                if any(g is None for _, g in fresh):
+                    continue  # transient service hiccup: keep the current goal
+                moved = max(math.hypot(f.pose.position.x - g.pose.position.x,
+                                       f.pose.position.y - g.pose.position.y)
+                            for (_, g), (_, f) in zip(ahead, fresh))
+                if moved > threshold:
+                    self.get_logger().warn(
+                        f'a waypoint ahead moved {moved:.2f} m (loop closure) - re-sending the route '
+                        f'through {[n for n, _ in fresh]}')
+                    new_handle, new_future = self.send_through([g for _, g in fresh])
+                    if new_handle is not None:
+                        names, goals = [n for n, _ in fresh], [g for _, g in fresh]
+                        handle, result_future, passed = new_handle, new_future, 0
+        return names[passed:]
+
     def waypoint_names(self):
         names = [n for n in self.get_parameter('waypoints').value if n]
         if names:
@@ -213,19 +303,27 @@ class WaypointMission(Node):
         return [n[:-len(PENDING_SUFFIX)] if n.endswith(PENDING_SUFFIX) else n for n in res.names]
 
     def run(self):
-        if not self.nav.wait_for_server(timeout_sec=20.0):
-            self.get_logger().error('Nav2 navigate_to_pose not available (is nav.launch.py up and active?)')
+        mode = self.get_parameter('mode').value
+        if mode not in ('pose', 'through'):
+            self.get_logger().error(f"mode must be 'pose' or 'through', not '{mode}'")
+            return 1
+        client, action = ((self.nav, 'navigate_to_pose') if mode == 'pose'
+                          else (self.nav_through, 'navigate_through_poses'))
+        if not client.wait_for_server(timeout_sec=20.0):
+            self.get_logger().error(f'Nav2 {action} not available (is nav.launch.py up and active?)')
             return 1
 
         names = self.waypoint_names()
         if not names:
             self.get_logger().error('no waypoints (tag some with /add_waypoint first)')
             return 1
-        self.get_logger().info(f'mission: {names}')
+        self.get_logger().info(f'mission ({mode}): {names}')
 
         stop_on_failure = self.get_parameter('stop_on_failure').value
         failed = []
-        for name in names:
+        if mode == 'through':
+            failed = self.go_through(names)
+        for name in (names if mode == 'pose' else []):
             if not self.go_to(name):
                 failed.append(name)
                 if stop_on_failure:
