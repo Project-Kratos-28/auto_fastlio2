@@ -14,7 +14,7 @@ of its global frame (odom) as obstacles. GLIM's odom z=0 is the LiDAR's START he
 ground is at -lidar_z, so the band "0.2 m to 1.8 m above ground" is computed here from lidar_z,
 the same way nav2_params.yaml (min/max_obstacle_height) and pcd2pgm_live.yaml (thre_z_*) are.
 Limits of a height band: a ramp steeper than ~10 deg shows as a wall about 1 m up it, and ditches
-(negative obstacles) are not detected. See README.md, Known limits.
+(negative obstacles) are not detected. See docs/ARCHITECTURE.md, Known limits.
 
 Runs inside the kratos_glim container (docker/): nvblox, the ZED SDK and the ESS runtime
 (~/kratos_nvblox/ess, mounted at /workspaces/kratos_nvblox) all live there.

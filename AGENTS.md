@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Guidance for AI coding agents and new teammates. Read [`README.md`](README.md) first: it explains
-the whole stack, configuration and operation.
+Guidance for AI coding agents and new teammates. Read [`README.md`](README.md) first (setup and running), then
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
 ## What this branch is
 
@@ -71,5 +71,5 @@ docker/run_container.sh 'PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/
 - **Not tested on the moving rover.** Tested on the Orin: full bring-up with both sensors (bench),
   the hardware-free tests.
 - **Never commit:** `build/`, `install/`, `log/`, `maps/`, `.home/`, `*.pcd`, `*.pgm`, GLIM dumps.
-- **Docs:** short and concrete, commands that can be pasted, no filler. `README.md` explains the
-  stack; `docs/FIELD_TEST.md` is the test-day runbook.
+- **Docs:** short and concrete, commands that can be pasted, no filler. `README.md` is setup and
+  running only; everything else is in `docs/` (`FIELD_TEST.md` is the test-day runbook).

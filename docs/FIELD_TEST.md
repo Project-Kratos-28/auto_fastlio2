@@ -1,6 +1,6 @@
 # Field test: map, tag waypoints, run the mission
 
-Test-day procedure on the rover's Orin. Background and configuration: [`README.md`](../README.md).
+Test-day procedure on the rover's Orin. Setup: [`README.md`](../README.md); settings: [`CONFIGURATION.md`](CONFIGURATION.md).
 
 ## 0. Before going out
 
