@@ -53,7 +53,7 @@ ros2 run pcd2pgm pcd2pgm_node --ros-args \
 
 GLIM only publishes `/glim_ros/map` while someone subscribes, and only every
 ~10 s. The first `/map` can therefore take up to 10 s after this starts.
-The full mission bring-up is in `docs/LIVE_MISSION_TEST.md`.
+The full stack is started by `start.sh` (see the top-level `README.md`); test-day checks are in `docs/FIELD_TEST.md`.
 
 `ros2 launch pcd2pgm pcd2pgm_launch.py` is the upstream launch file. It uses
 **file mode** (`config/pcd2pgm.yaml`) and opens RViz. Pass

@@ -1,626 +1,294 @@
-# Livox MID-360 GLIM SLAM + Nav2 Workspace
+# Kratos rover autonomy (branch `jazzy-nvblox`)
 
-ROS 2 Humble workspace for Project Kratos rover autonomy with a Livox MID-360.
-It covers real-time LiDAR-inertial SLAM with GLIM, submap-relative waypoints,
-a live 2D occupancy grid, and Nav2 navigation to the tagged waypoints, ending at
-`/cmd_vel`. (The repo name is historical.)
+LiDAR SLAM, waypoints and Nav2 for the Kratos rover, on a Jetson AGX Orin (JetPack 7.2,
+Ubuntu 24.04, ROS 2 Jazzy), with a ZED 2i adding near-field obstacles. The stack ends at
+Nav2's `/cmd_vel`; whatever drives the wheels subscribes to it and is not part of this repo.
+(The repo name `auto_fastlio2` is historical; FAST-LIO is not used.)
 
-> **Jazzy / Orin + nvblox (branch `jazzy-nvblox`):** `./start.sh` runs everything; see
-> [`docs/NVBLOX_JAZZY.md`](docs/NVBLOX_JAZZY.md).
-> The Humble instructions below still describe the VM setup.
->
-> **Start here for the autonomous mission:** [`docs/README.md`](docs/README.md).
-> It covers the mission, the runbooks, and where every piece lives.
-> **AI assistants / code reviewers:** read [`AGENTS.md`](AGENTS.md) first.
-
-The SLAM pipeline (sections 1-5 below) is:
-
-```text
-                                 /livox/lidar
-Livox MID-360 -> livox_ros_driver2 -> angular filter -> /livox/lidar_filtered -> GLIM
-                         \--------> /livox/imu -------------------------------> GLIM
-                                                                              |
-                                                              odometry + 3D map
+```
+Livox MID-360 ─► livox_ros_driver2 ─► /livox/lidar ─┬─► lidar_angle_filter ─► /livox/lidar_filtered ─► GLIM
+                                   └► /livox/imu ───┼──────────────────────────────────────────────────► GLIM
+                                                    └─► Nav2 obstacle_layer (local + global costmap)
+GLIM (+ waypoint_manager) ─► TF map→odom→base_link, /glim_ros/odom, /glim_ros/map, waypoint services
+/glim_ros/map ─► pcd2pgm (live) ─► /map ─► Nav2 global costmap
+ZED 2i ─► ESS depth (or ZED NEURAL) ─► nvblox (odom frame) ─► /nvblox_node/static_map_slice ─► Nav2 local costmap
+waypoint_mission.py ─► Nav2 navigate_to_pose / navigate_through_poses ─► /cmd_vel
 ```
 
-GLIM performs continuous pose estimation while it builds and optimizes the map. The
-autonomous mission builds on that live session:
+- **GLIM** is the SLAM: pose (`map → odom → base_link`) and a 3D map, from the MID-360's points
+  and IMU. It runs on the CPU; the GPU is kept for depth and nvblox.
+- **pcd2pgm** turns GLIM's 3D map into a 2D `/map` (fixed 50×50 m grid, 5 cm) for the global costmap.
+- **nvblox** covers what the LiDAR can't see: the MID-360's field of view is −7° to +52°, so at
+  0.60 m height its lowest beam reaches the ground ~4.9 m out, and anything shorter than
+  `0.60 − d·tan 7°` at distance `d` (a 30 cm rock at 2 m) is invisible to it. The ZED, tilted
+  down, is fused by nvblox into a 3 cm map in GLIM's `odom` frame, whose 2D slice feeds the local
+  costmap.
+- **waypoint_manager** (a GLIM extension) tags waypoints relative to GLIM submaps, so they move
+  with loop-closure corrections. **waypoint_mission.py** drives to them through Nav2.
 
-```text
-GLIM (+ waypoint_manager) --/glim_ros/map--> pcd2pgm --/map--> Nav2 (kratos_nav) --/cmd_vel-->
-  |  TF map->odom->base_link                                   ^
-  +-- /get_waypoint <-- waypoint_mission.py --NavigateToPose---+
-```
+Everything runs in one Docker container (`kratos_glim`), started by `start.sh`.
 
-Map and tag waypoints by hand, close the loop, then let Nav2 drive to each waypoint in
-the same GLIM session. See section 6 and [`docs/LIVE_MISSION_TEST.md`](docs/LIVE_MISSION_TEST.md).
+## Hardware and network
 
-This repository does **not** provide localization against a previously saved map
-(GLIM 1.2.2 has no such mode). Waypoints are only valid within the session that
-tagged them. Loading a saved GLIM dump in the offline viewer is for visualization,
-editing, and export; it does not start live localization.
-
-## 1. Getting started and workspace setup
-
-### 1.1 Supported platform
-
-- Ubuntu 22.04 LTS
-- ROS 2 Humble
-- Livox MID-360 with its integrated IMU
-- Ethernet connection to the LiDAR
-- Optional NVIDIA GPU and a GLIM-supported CUDA toolkit
-
-Commands below determine the repository location dynamically. They do not depend on a
-particular username, home directory, Ethernet interface name, or clone location.
-
-### 1.2 Install ROS 2 Humble and build tools
-
-If ROS 2 Humble is not already installed, configure the official ROS 2 apt repository.
-These commands follow the maintained
-[ROS 2 Ubuntu installation guide](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html):
-
-```bash
-sudo apt update
-sudo apt install -y software-properties-common curl
-sudo add-apt-repository universe
-
-ROS_APT_SOURCE_VERSION="$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
-  | grep -F 'tag_name' | awk -F'"' '{print $4}')"
-ROS_UBUNTU_CODENAME="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-${VERSION_CODENAME}}")"
-curl -L -o /tmp/ros2-apt-source.deb \
-  "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.${ROS_UBUNTU_CODENAME}_all.deb"
-sudo dpkg -i /tmp/ros2-apt-source.deb
-
-sudo apt update
-sudo apt upgrade
-sudo apt install -y \
-  ros-humble-desktop \
-  ros-humble-navigation2 \
-  ros-humble-nav2-bringup \
-  ros-dev-tools \
-  python3-colcon-common-extensions \
-  python3-rosdep \
-  build-essential \
-  cmake \
-  git \
-  libpcl-dev \
-  libeigen3-dev \
-  mesa-utils \
-  pcl-tools
-```
-
-Initialize `rosdep` once per computer:
-
-```bash
-sudo rosdep init
-rosdep update
-```
-
-If `rosdep` was initialized previously, the first command may report that its sources
-file already exists; continue with `rosdep update`.
-
-### 1.3 Install Livox-SDK2
-
-`livox_ros_driver2` requires Livox-SDK2 to be installed system-wide:
-
-```bash
-DEPENDENCY_DIR="$(mktemp -d)"
-git clone https://github.com/Livox-SDK/Livox-SDK2.git "$DEPENDENCY_DIR/Livox-SDK2"
-cmake -S "$DEPENDENCY_DIR/Livox-SDK2" -B "$DEPENDENCY_DIR/Livox-SDK2/build"
-cmake --build "$DEPENDENCY_DIR/Livox-SDK2/build" --parallel
-sudo cmake --install "$DEPENDENCY_DIR/Livox-SDK2/build"
-sudo ldconfig
-```
-
-### 1.4 Install GLIM
-
-Add the official GLIM Ubuntu 22.04 package repository:
-
-```bash
-curl -s --compressed "https://koide3.github.io/ppa/ubuntu2204/KEY.gpg" \
-  | gpg --dearmor \
-  | sudo tee /etc/apt/trusted.gpg.d/koide3_ppa.gpg >/dev/null
-
-echo "deb [signed-by=/etc/apt/trusted.gpg.d/koide3_ppa.gpg] https://koide3.github.io/ppa/ubuntu2204 ./" \
-  | sudo tee /etc/apt/sources.list.d/koide3_ppa.list >/dev/null
-
-sudo apt update
-sudo apt install -y libiridescence-dev libboost-all-dev libglfw3-dev libmetis-dev
-```
-
-Choose exactly one GLIM installation.
-
-CPU-only:
-
-```bash
-sudo apt install -y libgtsam-points-dev ros-humble-glim-ros
-sudo ldconfig
-```
-
-NVIDIA GPU:
-
-1. Install a GLIM-supported CUDA toolkit using the
-   [NVIDIA CUDA installation guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/).
-2. Confirm the installed toolkit version:
-
-   ```bash
-   nvcc --version
-   ```
-
-3. Install GLIM packages matching that CUDA version. For example, for CUDA 13.1:
-
-   ```bash
-   sudo apt install -y \
-     libgtsam-points-cuda13.1-dev \
-     ros-humble-glim-ros-cuda13.1
-   sudo ldconfig
-   ```
-
-Replace `cuda13.1` in both package names with the available suffix matching the local
-toolkit, such as `cuda12.2` or `cuda12.6`. See the
-[official GLIM installation page](https://koide3.github.io/glim/installation.html) for
-the currently published combinations.
-
-Verify the installation:
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 pkg executables glim_ros
-```
-
-The output should include `glim_rosnode`, `offline_viewer`, and `map_editor`.
-
-### 1.5 Select CPU or GPU configuration
-
-Set these entries under `global` in `glim/glim_config/config.json`.
-
-| Setting | CPU | NVIDIA GPU |
+| Device | Connection | Address / notes |
 |---|---|---|
-| `config_odometry` | `config_odometry_cpu.json` | `config_odometry_gpu.json` |
-| `config_sub_mapping` | `config_sub_mapping_passthrough.json` | `config_sub_mapping_gpu.json` |
-| `config_global_mapping` | `config_global_mapping_pose_graph.json` | `config_global_mapping_gpu.json` |
+| Livox MID-360 | Orin Ethernet `end0` (100 Mbit/s link, ~24 Mbit/s used) | LiDAR `192.168.1.162`, Orin `192.168.1.50/24` |
+| ZED 2i | USB 3 | needs the udev rule below |
+| Laptop | Ubiquiti link | same `ROS_DOMAIN_ID`; see [Laptop](#laptop) |
 
-No source rebuild is required after editing these repository-local GLIM JSON files. The
-launch command below passes their directory directly to GLIM.
+The LiDAR's IP is in `src/livox_ros_driver2/config/MID360_config.json` (`lidar_configs[0].ip`).
+A MID-360's factory address is `192.168.1.1XX`, XX = the last two digits of its serial number.
+The driver tells the LiDAR where to send data (`host_net_info`, `192.168.1.50`) at startup.
 
-On systems using NVIDIA PRIME in `on-demand` mode, selecting the GPU JSON files enables
-CUDA computation but does not necessarily make the GLIM or RViz window use NVIDIA
-OpenGL. Prefix GUI commands with both variables below to force NVIDIA rendering:
-
-```bash
-__NV_PRIME_RENDER_OFFLOAD=1 \
-__GLX_VENDOR_LIBRARY_NAME=nvidia \
-glxinfo -B | grep "OpenGL renderer"
-```
-
-The result should name the NVIDIA GPU rather than `llvmpipe`. These variables are only
-for NVIDIA systems. CPU-only systems must use the unprefixed commands.
-
-### 1.6 Clone and build the ROS packages
+## Setup (once)
 
 ```bash
-git clone https://github.com/Project-Kratos-28/auto_fastlio2.git
-cd auto_fastlio2
-source /opt/ros/humble/setup.bash
+# 1. ZED udev rule (host): lets the SDK reach the camera's sensors
+sudo cp ~/kratos_nvblox/docker/99-slabs.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
 
-colcon build --symlink-install \
-  --packages-select livox_ros_driver2 lidar_angle_filter \
-    waypoint_interfaces waypoint_manager glim_dump_export pcd2pgm kratos_nav \
-  --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble -DCMAKE_BUILD_TYPE=Release
+# 2. Images: the kratos nvblox image (Isaac ROS 4.6, nvblox, Nav2, ZED SDK 5.4.1), then this one on top
+~/kratos_nvblox/docker/build_image.sh
+~/kratos_glim/docker/build_image.sh
 
-source install/setup.bash
+# 3. Build the workspace (in the container; start.sh also does this if it was never built)
+~/kratos_glim/docker/run_container.sh docker/build_ws.sh
 ```
 
-GLIM itself is installed system-wide and is not built here. The
-`-DROS_EDITION`/`-DDISTRO_ROS` flags are required by `livox_ros_driver2` on the first
-configure.
+`docker/Dockerfile.glim` adds GLIM 1.2.2 (CPU, koide3 PPA), Livox-SDK2, Nav2 and the patched
+`glim_ros` overlay ([`glim/glim_ros_fix`](glim/glim_ros_fix/README.md)) to the kratos image.
+ESS (TensorRT engines, node, Python venv) comes from `~/kratos_nvblox/ess`, mounted into the
+container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/zed`.
 
-**Also build the GLIM 1.2.2 bug-fix overlay** if pcd2pgm/Nav2 will consume
-`/glim_ros/map`. Without it, `/map` can get phantom walls. Follow
-[`glim/glim_ros_fix/README.md`](glim/glim_ros_fix/README.md).
-
-### 1.7 Configure the MID-360 network
-
-The checked-in driver configuration expects:
-
-| Device | IPv4 address |
-|---|---|
-| Computer Ethernet adapter | `192.168.1.50/24` |
-| MID-360 | `192.168.1.125` |
-
-Configure the wired adapter with the desktop network settings. No particular network
-connection profile or interface name is required. Confirm the resulting address and
-sensor connectivity:
+## Run
 
 ```bash
-ip -brief address
-ping -c 3 192.168.1.125
+~/kratos_glim/start.sh                      # everything, ESS depth
+~/kratos_glim/start.sh depth:=zed           # ZED SDK NEURAL depth instead of ESS
+~/kratos_glim/start.sh depth:=none          # LiDAR only (no camera, no nvblox)
+~/kratos_glim/start.sh lidar_z:=0.62 cam_x:=0.35 cam_z:=0.45 cam_pitch:=0.30
+~/kratos_glim/start.sh --no-follow ...      # start and return to the prompt
+~/kratos_glim/logs.sh                       # follow the log again; logs.sh 'glim|ess' filters
+~/kratos_glim/stop.sh                       # stop; files GLIM's session; frees the ZED and GPU
 ```
 
-If a computer or sensor uses different addresses, update all host address fields and
-the sensor `ip` field in `src/livox_ros_driver2/config/MID360_config.json` before
-building the driver again.
-
-## 2. Create a map with GLIM
-
-Use four terminals. In every terminal, change to the cloned repository first; the
-commands do not assume where it was cloned.
-
-### 2.1 Start the MID-360 driver
-
-Terminal 1, CPU/default launch:
-
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch livox_ros_driver2 rviz_MID360_launch.py
-```
-
-Terminal 1, NVIDIA launch with the driver's raw-point RViz forced onto the GPU:
-
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-__NV_PRIME_RENDER_OFFLOAD=1 \
-__GLX_VENDOR_LIBRARY_NAME=nvidia \
-ros2 launch livox_ros_driver2 rviz_MID360_launch.py
-```
-
-The Livox driver does not perform CUDA processing; the NVIDIA prefix accelerates the
-RViz window started by this launch file.
-
-`rviz_MID360_launch.py` publishes `sensor_msgs/msg/PointCloud2`, which GLIM consumes.
-
-Before starting GLIM, confirm both streams:
-
-```bash
-ros2 topic hz /livox/lidar
-ros2 topic hz /livox/imu
-```
-
-Expected rates are approximately 10 Hz for LiDAR frames and 200 Hz for IMU data.
-
-### 2.2 Start the antenna angle filter
-
-Terminal 2:
-
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch lidar_angle_filter angle_filter.launch.py
-```
-
-The filter reads `/livox/lidar` and publishes `/livox/lidar_filtered`, which is the
-topic configured as GLIM's input. It removes 30-degree-wide sectors centered on the
-LiDAR +X axis (front) and -X axis (back): -15 to +15 degrees and 165 to 180 / -180 to
--165 degrees. All fields and per-point timestamps are preserved.
-
-The angle-filter settings are in `src/lidar_angle_filter/config/angle_filter.yaml`:
-
-| Parameter | Default | Meaning |
-|---|---:|---|
-| `input_topic` | `/livox/lidar` | Raw `PointCloud2` input from the Livox driver |
-| `output_topic` | `/livox/lidar_filtered` | Filtered cloud consumed by GLIM |
-| `front_center_deg` | `0.0` | Rover-forward direction in the LiDAR XY plane; 0° is +X and positive rotation is toward +Y |
-| `front_sector_deg` | `30.0` | Full width of the excluded front sector |
-| `back_sector_deg` | `30.0` | Full width of the excluded rear sector, centered 180° from the front |
-
-The sector values are full widths, not half-angles. To exclude 30 degrees on each side
-of an axis (a 60-degree-wide sector), set the corresponding value to `60.0`. Set a
-sector to `0.0` to disable it. If LiDAR +X does not point toward the rover's front,
-change `front_center_deg` to the rover-forward azimuth in the LiDAR frame.
-
-This is an all-range azimuth mask: valid environmental returns in those directions are
-also removed. It prevents antenna returns from entering new GLIM maps, but it does not
-alter maps that were saved before the filter was enabled.
-
-Confirm the filtered stream before starting GLIM:
-
-```bash
-ros2 topic hz /livox/lidar_filtered
-ros2 topic info /livox/lidar_filtered --verbose
-```
-
-The topic rate should remain approximately 10 Hz. After GLIM starts, the verbose topic
-information should list `glim_rosnode` as a subscriber.
-
-### 2.3 Start GLIM SLAM
-
-Stop the rover and keep it completely motionless before running this command.
-
-`glim/glim_config/config_ros.json` uses `base_frame_id: base_link`. GLIM needs the
-static transform `base_link -> livox_frame` to publish its pose TF. Without it, GLIM
-warns `Failed to lookup transform` every frame and Nav2 has no pose. Start it first:
-
-- For the full mission, `ros2 launch kratos_nav nav.launch.py` provides it.
-- For SLAM only, run this in its own terminal first:
-
-  ```bash
-  source /opt/ros/humble/setup.bash
-  ros2 run tf2_ros static_transform_publisher --z 0.60 --frame-id base_link --child-frame-id livox_frame
-  ```
-
-  0.60 m is the placeholder LiDAR height above the ground. Keep it equal to
-  `lidar_z` in `src/kratos_nav/launch/nav.launch.py`.
-
-The config also loads `libwaypoint_manager.so`, so `source install/setup.bash` in this
-terminal. If you built the `glim_ros_fix` overlay, source its `local_setup.bash` last.
-
-Terminal 3, CPU/default launch:
-
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-
-ros2 run glim_ros glim_rosnode --ros-args \
-  -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
-```
-
-Terminal 3, NVIDIA launch with CUDA configuration and forced NVIDIA OpenGL:
-
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-
-__NV_PRIME_RENDER_OFFLOAD=1 \
-__GLX_VENDOR_LIBRARY_NAME=nvidia \
-ros2 run glim_ros glim_rosnode --ros-args \
-  -p config_path:="$(realpath "$REPO_ROOT/glim/glim_config")"
-```
-
-This GPU command requires the three GPU JSON entries from section 1.5. The JSON files
-enable CUDA odometry and mapping; the environment variables accelerate GLIM's standard
-viewer with NVIDIA OpenGL.
-
-Keep the rover still until GLIM prints `initial IMU state estimation result`, normally
-after two to five seconds. Starting while the rover is moving can produce incorrect
-IMU bias, orientation, and velocity estimates. Move only after initialization has
-completed.
-
-The one-time messages about large point timestamps and Livox `FLOAT64` nanoseconds are
-expected when automatic MID-360 timestamp detection is enabled.
-
-### 2.4 Visualize the live map
-
-Terminal 4, CPU/default visualization:
-
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
-```
-
-Terminal 4, RViz forced onto NVIDIA OpenGL:
-
-```bash
-cd /path/to/auto_fastlio2
-source /opt/ros/humble/setup.bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-
-__NV_PRIME_RENDER_OFFLOAD=1 \
-__GLX_VENDOR_LIBRARY_NAME=nvidia \
-rviz2 -d "$REPO_ROOT/glim/glim_ros.rviz"
-```
-
-The supplied RViz layout already contains the required GLIM displays:
-
-- `/glim_ros/points`: current registered LiDAR scan
-- `/glim_ros/map`: accumulated optimized map; updated approximately every 10 seconds
-- `/glim_ros/odom`: current LiDAR-inertial pose
-
-The driver launch also opens its own RViz window for the raw point cloud. Use the GLIM
-RViz window or GLIM's standard viewer to inspect the accumulated map.
-
-### 2.5 Record the area
-
-After IMU initialization:
-
-1. Drive slowly and smoothly through the area.
-2. Avoid abrupt acceleration, impacts, wheel vibration, and movement of the LiDAR mount.
-3. Keep nearby surfaces in view and overlap adjacent passes.
-4. Revisit previously mapped areas and return near the starting position to provide
-   useful loop-closure opportunities.
-5. Do not disconnect Ethernet or interrupt the IMU stream while mapping.
-
-The current GPU profile retains more detail than the original defaults:
-
-| File | Parameter | Value |
-|---|---|---:|
-| `config_preprocess.json` | `random_downsample_target` | `20000` |
-| `config_sub_mapping_gpu.json` | `submap_downsample_resolution` | `0.05 m` |
-| `config_sub_mapping_gpu.json` | `submap_target_num_points` | `100000` |
-
-This profile uses more GPU memory, system memory, and storage. Reducing the resolution
-below 0.05 m generally increases noise and processing cost substantially.
-
-## 3. Verify live SLAM and localization
-
-GLIM localization is the pose estimate produced during the active SLAM session. Check
-the odometry rate:
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 topic hz /glim_ros/odom
-```
-
-It should normally be close to the LiDAR frame rate. Inspect one pose:
-
-```bash
-ros2 topic echo /glim_ros/odom --once --field pose.pose
-```
-
-For a physical motion check:
-
-1. Leave the rover stationary and record the pose above.
-2. Move forward by approximately 1-2 m and rotate 30-45 degrees.
-3. Stop the rover and record the pose again.
-4. Confirm that the position and orientation changed consistently with the motion.
-
-Inspect the complete GLIM transform chain:
-
-```bash
-ros2 run tf2_ros tf2_echo map base_link     # published by GLIM
-ros2 run tf2_ros tf2_echo map livox_frame   # via the static base_link -> livox_frame TF
-```
-
-If the driver frame was changed from `livox_frame`, substitute its configured frame ID.
-
-Useful live publishers can be confirmed without modifying RViz:
-
-```bash
-ros2 topic info /livox/lidar_filtered --verbose
-ros2 topic info /glim_ros/points --verbose
-ros2 topic info /glim_ros/map --verbose
-```
-
-## 4. Stop and save a map
-
-In Terminal 3, press `Ctrl+C` once. Wait for GLIM to print `saved` before closing the
-terminal or stopping the driver. GLIM writes the completed graph, submaps,
-configuration, and trajectories to `/tmp/dump`.
-
-`/tmp/dump` is temporary, is replaced by a later GLIM run, and may be removed during a
-reboot. Move it immediately to a permanent directory:
-
-```bash
-cd /path/to/auto_fastlio2
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-MAP_PATH="$REPO_ROOT/maps/glim_$(date +%Y%m%d_%H%M%S)"
-
-mkdir -p "$REPO_ROOT/maps"
-mv /tmp/dump "$MAP_PATH"
-echo "Saved map: $MAP_PATH"
-```
-
-The `maps/` directory is ignored by Git because GLIM dumps can be large. Important dump
-contents include:
-
-- numbered submap directories such as `000000/`
-- `graph.bin` and `values.bin`
-- `odom_imu.txt` and `odom_lidar.txt`: trajectories before global correction
-- `traj_imu.txt` and `traj_lidar.txt`: optimized trajectories after global correction
-- the exact configuration used for the session under `config/`
-
-## 5. Open, edit, and export a saved map
-
-Open a saved dump directly on a CPU-only system:
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 run glim_ros offline_viewer --map_path /absolute/path/to/saved/glim_dump
-```
-
-Open it with CUDA computation and NVIDIA OpenGL rendering:
-
-```bash
-source /opt/ros/humble/setup.bash
-
-__NV_PRIME_RENDER_OFFLOAD=1 \
-__GLX_VENDOR_LIBRARY_NAME=nvidia \
-ros2 run glim_ros offline_viewer --map_path /absolute/path/to/saved/glim_dump
-```
-
-An offline viewer uses the configuration saved inside the dump. A map recorded with
-the GPU configuration loads CUDA mapping modules; the NVIDIA environment variables
-force its window onto the discrete GPU.
-
-Alternatively, launch `ros2 run glim_ros offline_viewer`, then select
-`File -> Open Map` and choose the dump directory.
-
-The offline viewer can optimize explicit constraints:
-
-- Loop closure: right-click one submap sphere and select `Loop begin`; select another
-  sphere and choose `Loop end`; align the clouds and create the factor.
-- Plane adjustment: right-click a point on a flat surface, choose
-  `Bundle Adjustment (Plane)`, set the selection radius, and create the factor.
-
-Remove unwanted map points on a CPU-only system with:
-
-```bash
-ros2 run glim_ros map_editor
-```
-
-On an NVIDIA system, force the editor onto NVIDIA OpenGL:
-
-```bash
-__NV_PRIME_RENDER_OFFLOAD=1 \
-__GLX_VENDOR_LIBRARY_NAME=nvidia \
-ros2 run glim_ros map_editor
-```
-
-While a CUDA-enabled GLIM process or offline viewer is running, confirm NVIDIA usage
-with:
-
-```bash
-watch -n 1 nvidia-smi
-```
-
-Export the map from `File -> Save -> Export Points`. GLIM exports PLY. Convert it to PCD
-when another component requires PCD:
-
-```bash
-pcl_ply2pcd /path/to/map.ply /path/to/map.pcd
-```
-
-## 6. Live 2D map and autonomous navigation
-
-These are the pieces added on top of live GLIM for the competition mission. The full
-terminal-by-terminal bring-up, checks and troubleshooting are in
-[`docs/LIVE_MISSION_TEST.md`](docs/LIVE_MISSION_TEST.md).
-
-| Piece | Package / path | What it does |
+**Keep the rover still for the first ~10 s**: GLIM estimates the IMU state at start
+(`initial IMU state estimation result` in the log). Moving then gives wrong IMU bias and orientation.
+
+- The stack runs **detached** in the container. Ctrl+C in `start.sh`/`logs.sh`, closing the
+  terminal or losing SSH only stops showing the log. Only `stop.sh` stops the stack.
+- `start.sh` checks the LiDAR answers, and (unless `depth:=none`) that the ZED is plugged in and
+  no other container runs it (only one process can open the camera). It also re-binds the ZED's
+  HID interface to `usbhid` if a previous ZED SDK run left it detached (`tools/zed_hid_rebind.sh`):
+  otherwise the container gets no `/dev/hidraw` node for the camera's sensors.
+- `stop.sh` sends Ctrl+C to the launch (GLIM writes its session to `/tmp/dump`), moves the dump to
+  `~/kratos_glim/maps/<date_time>`, stops the container and re-binds the ZED HID interface.
+- Logs: `~/kratos_glim/log/bringup/<date_time>.log` (`latest.log` links to the newest).
+- **GUIs start only with a local X display** (the Orin's desktop). Over SSH, RViz is not started
+  and GLIM runs without its OpenGL viewer: GLIM crashes at start when the viewer cannot open a
+  display. Force with `gui:=true|false`.
+
+### Launch arguments (`src/kratos_bringup/launch/kratos.launch.py`)
+
+| Argument | Default | Meaning |
 |---|---|---|
-| Waypoints | `glim/glim_ext_addon/waypoint_manager` | GLIM extension: `/add_waypoint`, `/get_waypoint`, `/list_waypoints`, `/save_waypoints`. Poses ride along with loop closure |
-| Live 2D map | `src/pcd2pgm` (live mode) | `/glim_ros/map` -> filters -> fixed 50x50 m, 0.05 m `/map` (`OccupancyGrid`, transient_local) |
-| Navigation | `src/kratos_nav` | `nav.launch.py`: Nav2 without map_server/AMCL plus the static `base_link -> livox_frame` TF. `waypoint_mission.py`: drives to each GLIM waypoint in order |
-| GLIM bug fix | `glim/glim_ros_fix` | Patch + overlay for the GLIM 1.2.2 `/glim_ros/map` corruption |
+| `depth` | `ess` | `ess`, `zed` (SDK NEURAL) or `none` |
+| `gui` | `auto` | `auto`: RViz + GLIM viewer only with a local display |
+| `lidar_z` | `0.60` | MID-360 height above ground (m). **Placeholder** |
+| `lidar_x` | `0.0` | MID-360 forward of `base_link` (m) |
+| `cam_x`, `cam_y`, `cam_z` | `0.30`, `0.0`, `0.45` | ZED (`zed_camera_link`) position from `base_link` (m). **Placeholder** |
+| `cam_pitch`, `cam_yaw` | `0.30`, `0.0` | ZED down-tilt and yaw (rad). **Placeholder** |
 
-Minimal order (each line in its own terminal, after `source install/setup.bash`):
+`base_link` is on the ground, under the rover's turning centre.
+
+### What starts
+
+| Order | Component | Output |
+|---|---|---|
+| 1 | `livox_ros_driver2` | `/livox/lidar` (PointCloud2, 10 Hz), `/livox/imu` (200 Hz) |
+| 2 | `lidar_angle_filter` | `/livox/lidar_filtered`: ±15° front and back removed (antenna) |
+| 3 | `kratos_nav/nav.launch.py` | static TF `base_link → livox_frame`, `base_link → zed_camera_link`; Nav2 |
+| 4 | GLIM (3 s later, after the static TF) | TF `map → odom → base_link`, `/glim_ros/odom`, `/glim_ros/map`, waypoint services |
+| 5 | `pcd2pgm` (live) | `/map` |
+| 6 | `kratos_perception` | ZED 2i, ESS, nvblox → `/nvblox_node/static_map_slice` |
+| 7 | RViz (`kratos_bringup/rviz/kratos.rviz`) | only with a GUI |
+
+Nav2 is 7 nodes (controller, smoother, planner, behaviors, bt_navigator, waypoint_follower,
+velocity_smoother) started directly: Jazzy's `navigation_launch.py` also starts route, collision
+monitor and docking servers that abort the bringup without their own config. Controller and
+behaviors publish `cmd_vel_nav`; the velocity smoother publishes the final `/cmd_vel`.
+
+Measured on the Orin with both sensors: GLIM odometry 10 Hz, its TF ~120 ms behind real time;
+ZED 15 Hz; ESS ~40 ms/frame with TTA (processes ~11–15 Hz), ~20 ms without (27–28 Hz); nvblox
+slice ~9–12 Hz; CPU 30–60 % per core, GPU ~37 %, RAM 11 GB of 62 GB.
+
+## Waypoints and missions
+
+Waypoints are tagged at the rover's current pose while GLIM runs. Call the services from any
+shell in the container (`~/kratos_glim/docker/run_container.sh`) or from the laptop:
 
 ```bash
-ros2 launch livox_ros_driver2 rviz_MID360_launch.py
-ros2 launch lidar_angle_filter angle_filter.launch.py
-ros2 launch kratos_nav nav.launch.py                 # BEFORE GLIM (static TF)
-# GLIM (section 2.3; source the glim_ros_fix overlay last)
-ros2 run pcd2pgm pcd2pgm_node --ros-args \
-  --params-file "$(ros2 pkg prefix pcd2pgm)/share/pcd2pgm/config/pcd2pgm_live.yaml"
-# ...drive and tag:  ros2 service call /add_waypoint waypoint_interfaces/srv/AddWaypoint "{name: wp1}"
-ros2 run kratos_nav waypoint_mission.py --ros-args -p waypoints:="['wp1','wp2']"
+ros2 service call /add_waypoint waypoint_interfaces/srv/AddWaypoint "{name: wp1}"
+ros2 service call /list_waypoints waypoint_interfaces/srv/ListWaypoints
+ros2 service call /get_waypoint waypoint_interfaces/srv/GetWaypoint "{name: wp1}"
+ros2 service call /save_waypoints waypoint_interfaces/srv/SaveWaypoints "{path: /workspaces/kratos_glim/maps/waypoints.yaml}"
 ```
 
-**Placeholders to measure on the rover before trusting any of this:**
+- Stop facing the direction you want to arrive in: the waypoint's heading is the goal heading.
+- A new tag is **pending** until GLIM finishes its submap (~every 5 m of travel): `/get_waypoint`
+  says `found=False`, `/list_waypoints` shows `wp1 (pending)`, loop closure doesn't move it yet.
+  After the last tag, keep driving a few metres.
+- `/add_waypoint` fails with `no odometry yet` until GLIM has processed a frame.
+- GLIM autosaves waypoints to `/tmp/waypoints_autosave.yaml` every 10 s.
+- **Waypoints exist only in the running GLIM session.** GLIM 1.2.2 cannot relocalize in a saved
+  map, and saved waypoint files cannot be loaded back. Restarting the stack starts a new map at a
+  new origin. Keep it running from mapping through the mission.
+- Waypoint markers: `/glim_ros/waypoints` (MarkerArray).
 
-- `lidar_z` (0.60 m). It appears in three files: `nav.launch.py`, `nav2_params.yaml`
-  and `pcd2pgm_live.yaml`.
-- The robot footprint in `nav2_params.yaml`.
+Drive the waypoints:
 
-pcd2pgm has **no command-line converter**. To get a Nav2 map file from a saved
-session, export the dump to PCD (section 5), run `pcd2pgm_node` in file mode
-(`config/pcd2pgm.yaml`, set `pcd_file`), and save `/map` with
-`ros2 run nav2_map_server map_saver_cli -f <name>`. See
-[`src/pcd2pgm/README.md`](src/pcd2pgm/README.md).
+```bash
+ros2 run kratos_nav waypoint_mission.py                                  # all tagged, in tag order, one at a time
+ros2 run kratos_nav waypoint_mission.py --ros-args -p waypoints:="['wp1','wp3']"
+ros2 run kratos_nav waypoint_mission.py --ros-args -p mode:=through      # one route through all
+```
 
-## 7. Repository layout
+- `mode:=pose` sends one `navigate_to_pose` goal per waypoint and stops at each.
+  `mode:=through` sends one `navigate_through_poses` goal; a waypoint counts as passed within 0.7 m.
+- Every 2 s it re-reads the waypoints from GLIM; if one still ahead moved more than 0.3 m (loop
+  closure), it re-sends the goal (through: with only the waypoints not yet passed).
+- It waits up to 30 s for a pending waypoint. Ctrl+C cancels the Nav2 goal.
+- Over SSH, run it inside `tmux`: a plain SSH session's processes are killed (SIGHUP) when the
+  link drops. Parameters: [`src/kratos_nav/README.md`](src/kratos_nav/README.md).
 
-| Path | Purpose |
+Test-day procedure with checks and troubleshooting: [`docs/FIELD_TEST.md`](docs/FIELD_TEST.md).
+
+## Configuration
+
+### Heights: `lidar_z`
+
+GLIM's `map`/`odom` origin is the LiDAR's **start** pose, so the ground is at `z = −lidar_z`.
+Every obstacle height band is 0.2 m to 1.8 m above ground, i.e. `0.2 − lidar_z` to `1.8 − lidar_z`
+(−0.40 / 1.20 at `lidar_z` 0.60). The value appears in four places; change them together:
+
+| Where | What |
 |---|---|
-| `glim/glim_config/` | MID-360 GLIM CPU and GPU configuration files |
-| `glim/glim_ros.rviz` | Preconfigured live GLIM RViz layout |
-| `glim/README.md` | Compact GLIM command reference and configuration notes |
-| `glim/glim_ext_addon/` | `waypoint_manager` GLIM extension, `waypoint_interfaces`, `glim_dump_export` |
-| `glim/glim_ros_fix/` | Patch + overlay build for the GLIM 1.2.2 `/glim_ros/map` bug |
-| `src/pcd2pgm/` | Point cloud -> `OccupancyGrid` node; live mode follows `/glim_ros/map` on a fixed grid |
-| `src/kratos_nav/` | Nav2 config/launch, `waypoint_mission.py`, hardware-free tests |
-| `docs/` | Mission overview, live-test runbooks, design notes |
-| `AGENTS.md` | Orientation for AI assistants and reviewers (`CLAUDE.md` points to it) |
-| `src/lidar_angle_filter/` | Front/rear antenna-sector PointCloud2 filter |
-| `src/livox_ros_driver2/` | Livox ROS 2 driver source and MID-360 network configuration |
-| `maps/` | Local GLIM dump storage; generated at runtime and ignored by Git |
+| `start.sh lidar_z:=` (→ `nav.launch.py`, `perception.launch.py`) | static TF; nvblox slice band (computed) |
+| `src/kratos_nav/config/nav2_params.yaml` | `min_obstacle_height` / `max_obstacle_height`, both costmaps |
+| `src/pcd2pgm/config/pcd2pgm_live.yaml` | `thre_z_min` / `thre_z_max` |
+
+Symptom of a wrong value: the floor shows as obstacles, or low obstacles are missing.
+
+### Camera mount
+
+`cam_*` must be measured, better calibrated against the LiDAR. A 1° pitch error moves the ground
+by 3.5 cm at 2 m; ground that rises into the band becomes an obstacle.
+
+### Other settings
+
+| File | Setting |
+|---|---|
+| `nav2_params.yaml` | footprint 0.74 × 0.74 m (**placeholder**), Smac Hybrid-A* (Dubins, min. turn radius 0.6 m), Regulated Pure Pursuit 0.4 m/s without rotate-in-place, local costmap 6×6 m (LiDAR + nvblox), global costmap `/map` + LiDAR |
+| `behavior_trees/*_no_spin.xml` | Jazzy default trees without Spin (the rover can't turn in place) |
+| `pcd2pgm_live.yaml` | fixed grid origin (−25, −25), 50×50 m, 0.05 m: size it to the whole arena; points outside are dropped. Radius filter 0.75 m / 2 neighbours (GLIM's map is voxelized at 0.5 m; tighter values erase walls) |
+| `lidar_angle_filter/config/angle_filter.yaml` | masked sectors (full widths), `front_center_deg` if LiDAR +X isn't rover-forward |
+| `glim/glim_config/config.json` | CPU modules (odometry CPU, sub-mapping passthrough, pose-graph global mapping). `config_global_mapping_pose_graph.json`: `min_travel_dist` 8 m (stock 50 m never closes loops in small areas) |
+| `glim/glim_config/config_ros.json` | `base_frame_id: base_link`, topics, extension modules (`libwaypoint_manager.so`) |
+| `kratos_perception/config/zed2i_glim.yaml` | ZED: HD720, 15 Hz published, **tracking and TF off** (GLIM owns the pose) |
+| `kratos_perception/config/nvblox_glim.yaml` | nvblox: `odom`, 3 cm voxels, no color, 5 m integration, clears > 8 m from `base_link` |
+| `kratos_perception/config/ess_zed2i.yaml` | ESS: contrast stretch, TTA (vertical-flip agreement), confidence 0.1. `tta: false` doubles the rate |
+
+## Maps (GLIM sessions)
+
+`stop.sh` files each session under `~/kratos_glim/maps/<date_time>/` (ignored by git): numbered
+submaps, `graph.bin`, `values.bin`, `odom_*.txt` (trajectory before loop closure), `traj_*.txt`
+(after), and the config used. Tools, in the container:
+
+```bash
+ros2 run glim_ros offline_viewer --map_path /workspaces/kratos_glim/maps/<date_time>   # needs a display
+ros2 run glim_ros map_editor                                                           # needs a display
+ros2 run glim_dump_export glim_dump_export /workspaces/kratos_glim/maps/<date_time> map.pcd /workspaces/kratos_glim/glim/glim_config
+```
+
+- `offline_viewer`: add missed loop closures (right-click a submap sphere → `Loop begin`, another
+  → `Loop end`), plane bundle adjustment, re-optimize, `File → Save → Export Points` (PLY).
+- `glim_dump_export`: dump → PCD without a GUI, using the poses as optimized live.
+- A Nav2 map file from a PCD: `pcd2pgm_node` in file mode (`src/pcd2pgm/config/pcd2pgm.yaml`,
+  set `pcd_file`), then `ros2 run nav2_map_server map_saver_cli -f <name>`.
+
+## Laptop
+
+`~/kratos_glim/ros_network.env` sets the container's ROS networking (restart the stack after editing):
+
+| Variable | Value | Why |
+|---|---|---|
+| `ROS_DOMAIN_ID` | `0` | must equal the laptop's |
+| `ROS_AUTOMATIC_DISCOVERY_RANGE` | `SUBNET` | the laptop can see the rover |
+| `RMW_IMPLEMENTATION` | `rmw_fastrtps_cpp` | same DDS on both sides |
+| `ROS_STATIC_PEERS` | (commented) | laptop IP, if the radio drops the multicast DDS uses for discovery |
+
+On the laptop: same domain ID and RMW; Humble: `ROS_LOCALHOST_ONLY` unset; Jazzy:
+`ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET`. It needs `waypoint_interfaces` (this repo) to call the
+waypoint services. View the rover with `rviz2 -d src/kratos_bringup/rviz/laptop.rviz`: only `/map`,
+costmaps, TF, `/plan` and odometry, which are light over the radio. Point clouds, images and the
+nvblox mesh are not (1280×720 color is tens of MB/s). "2D Goal Pose" sends a Nav2 goal.
+Humble ↔ Jazzy is not officially supported by ROS; standard messages and these services work over
+Fast DDS, but test before relying on it.
+
+Check from the laptop: `ros2 node list` (shows `/glim_ros`, `/bt_navigator`, `/nvblox_node`, ...),
+`ros2 service list | grep waypoint`.
+
+Clocks: without PTP, the Livox driver stamps each packet with the Orin's clock when it arrives
+(`GetEthPacketTimestamp`, `src/comm/pub_handler.cpp`), so all sensors share one clock.
+`python3 tools/check_time_sync.py` shows every sensor's offset (LiDAR ~100 ms: a scan is stamped
+at its start). `tools/setup_ptp.sh <iface>` makes the Orin a PTP master for the LiDAR; optional,
+it only removes arrival jitter.
+
+## Tests
+
+In the container (`~/kratos_glim/docker/run_container.sh`), from `/workspaces/kratos_glim`:
+
+```bash
+colcon test --packages-select waypoint_manager lidar_angle_filter && colcon test-result --all
+KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh                  # fake GLIM + real Nav2 + mission
+MISSION_ARGS="-p mode:=through" KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh
+KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.sh         # late goal accept, Ctrl+C
+PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/test/run_all.sh                     # pcd2pgm live mode
+```
+
+The shell tests use their own `ROS_DOMAIN_ID` (43–45) and `pkill` their node names: run them one at
+a time, not during a live run. Details: [`src/kratos_nav/test/README.md`](src/kratos_nav/test/README.md),
+[`src/pcd2pgm/test/README.md`](src/pcd2pgm/test/README.md).
+
+## Known limits
+
+- **Ramps:** nvblox (and the LiDAR layers) mark every surface 0.2–1.8 m above the *start* ground as
+  an obstacle. A 10° ramp becomes a wall ~1.1 m up it (5°: 2.3 m); on a hill, ground can enter the band.
+- **Ditches and drops are not detected** by any layer, and the planner allows unknown space
+  (`allow_unknown: true`).
+- **No relocalization:** waypoints and the map live only in the running GLIM session.
+- **GLIM aborts on full LiDAR occlusion** (e.g. a hand over the sensor).
+- **Fixed 50×50 m grid** around GLIM's start: size it to the arena.
+- **ESS with TTA skips ~¼ of the camera's frames**; enough for the rover's speed.
+- **Placeholders:** `lidar_z`, camera mount, footprint, grid size, turning radius.
+- **Not tested on the moving rover yet.** Tested on the Orin: all of the above bring-up with both
+  sensors (bench), and the hardware-free tests.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `start.sh`, `stop.sh`, `logs.sh`, `ros_network.env` | run the stack from the host |
+| `docker/` | image (`Dockerfile.glim`, `build_image.sh`), container (`run_container.sh`), workspace build (`build_ws.sh`) |
+| `tools/` | `check_time_sync.py`, `zed_hid_rebind.sh`, `setup_ptp.sh` |
+| `src/kratos_bringup/` | `kratos.launch.py` (whole stack), RViz layouts (`kratos.rviz`, `laptop.rviz`) |
+| `src/kratos_perception/` | ZED 2i + ESS + nvblox launch and config |
+| `src/kratos_nav/` | Nav2 launch, params, behavior trees, `waypoint_mission.py`, tests |
+| `src/pcd2pgm/` | point cloud → OccupancyGrid; live mode on a fixed grid |
+| `src/lidar_angle_filter/` | front/back sector mask |
+| `src/livox_ros_driver2/` | Livox driver (MID-360 only) |
+| `glim/glim_config/` | GLIM configuration (keep the directory together) |
+| `glim/glim_ext_addon/` | `waypoint_manager`, `waypoint_interfaces`, `glim_dump_export` |
+| `glim/glim_ros_fix/` | patch for GLIM 1.2.2's `/glim_ros/map` bug (built into the image) |
+| `docs/FIELD_TEST.md` | test-day runbook |
+| `WAYPOINT_AND_CONE_GUIDE.md` | design proposal: semantic landmarks and cones for IRC 2026 (not implemented) |
+| `AGENTS.md` | orientation for AI agents and reviewers |

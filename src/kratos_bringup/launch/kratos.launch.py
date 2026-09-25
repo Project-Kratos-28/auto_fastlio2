@@ -8,7 +8,7 @@
 
 From the host, ~/kratos_glim/start.sh does the container part and passes arguments through.
 
-Starts, in this order (same as docs/LIVE_MISSION_TEST.md, terminals T1-T5, plus the camera):
+Starts, in this order:
   1. livox_ros_driver2          /livox/lidar (PointCloud2, 10 Hz), /livox/imu (200 Hz)
   2. lidar_angle_filter         /livox/lidar_filtered (antenna sectors masked) for GLIM
   3. kratos_nav nav.launch.py   static TF base_link -> livox_frame, base_link -> zed_camera_link; Nav2

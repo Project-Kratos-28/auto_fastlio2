@@ -13,7 +13,7 @@ Nav2 for the Kratos rover. It uses GLIM for localization and pcd2pgm's live
 
 ## Run
 
-The full bring-up order, with health checks, is in `docs/LIVE_MISSION_TEST.md`.
+The full bring-up order is in the top-level `README.md`; health checks are in `docs/FIELD_TEST.md`.
 In short:
 
 ```bash

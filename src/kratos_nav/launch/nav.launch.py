@@ -8,7 +8,7 @@ Starts the things Nav2 needs that nobody else publishes:
 
 Deliberately NOT started: map_server (pcd2pgm publishes /map live) and AMCL
 (GLIM publishes map->odom). Driver, angle filter, GLIM, pcd2pgm and the camera
-pipeline (kratos_perception) run in their own terminals; see docs/NVBLOX_JAZZY.md.
+pipeline (kratos_perception) are started by kratos_bringup/launch/kratos.launch.py (README.md).
 
 Nav2's nodes are started here directly instead of through nav2_bringup's
 navigation_launch.py: in Jazzy that file also starts route_server, collision_monitor

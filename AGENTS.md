@@ -1,120 +1,75 @@
 # AGENTS.md
 
-Guidance for AI coding agents (Codex, Claude Code, etc.) and new teammates
-working in this repo.
+Guidance for AI coding agents and new teammates. Read [`README.md`](README.md) first: it explains
+the whole stack, configuration and operation.
 
-## What this repo is
+## What this branch is
 
-`auto_fastlio2` is Project Kratos's autonomy workspace (ROS 2 Humble, Ubuntu
-22.04, Livox MID-360). The `jazzy-nvblox` branch ports it to ROS 2 Jazzy on the
-Jetson AGX Orin and adds ZED 2i + nvblox obstacles: read `docs/NVBLOX_JAZZY.md`. The name is historical.
-The active stack is:
+`jazzy-nvblox`: the Kratos rover autonomy stack on a Jetson AGX Orin (JetPack 7.2, Ubuntu 24.04,
+ROS 2 Jazzy), all in one Docker container (`kratos_glim`, built from `docker/`):
+Livox MID-360 → GLIM (SLAM + `waypoint_manager`) → pcd2pgm `/map` → Nav2 → `/cmd_vel`, plus
+ZED 2i → ESS/ZED depth → nvblox → Nav2 local costmap. `start.sh` runs everything
+(`src/kratos_bringup/launch/kratos.launch.py`).
 
-1. **GLIM** (apt `ros-humble-glim-ros` 1.2.2): SLAM and localization.
-   - Config is in `glim/glim_config`.
-   - The `/glim_ros/map` bug fix overlay is in `glim/glim_ros_fix`.
-2. **waypoint_manager** (`glim/glim_ext_addon`): a GLIM extension. It stores
-   waypoints relative to submaps, so they follow loop closure.
-3. **pcd2pgm** (`src/pcd2pgm`), live mode: `/glim_ros/map` → 2D `/map`.
-4. **kratos_nav** (`src/kratos_nav`):
-   - Nav2 config
-   - `waypoint_mission.py` (autonomous mission)
-5. Also used: `src/livox_ros_driver2` (driver) and `src/lidar_angle_filter`
-   (masks the rover body out of the scan).
-
-**Scope ends at `/cmd_vel`.** Nav2 publishes it; whatever drives the wheels
-(drive stack, motor controller) is outside this repo.
-
-## Layout
-
-| Path | Contents |
-|---|---|
-| `src/kratos_nav/` | Nav2 launch/params/BTs, mission script, hardware-free tests |
-| `src/pcd2pgm/` | Fork of LihanChen2004/pcd2pgm plus live mode (`config/pcd2pgm_live.yaml`), standalone test suite in `test/` |
-| `src/lidar_angle_filter/` | Front/back sector mask for the LiDAR (gtest) |
-| `glim/glim_config/` | GLIM JSON config (`base_frame_id: base_link`, CPU modules) |
-| `glim/glim_ext_addon/` | `waypoint_interfaces` (srvs), `waypoint_manager` (GLIM extension + gtest), `glim_dump_export` |
-| `glim/glim_ros_fix/` | Patch for glim_ros 1.2.2 `rviz_viewer` (upstream koide3/glim_ros2#76), built as an overlay |
-| `docs/` | Runbooks. Start at `docs/README.md` |
+**Scope ends at `/cmd_vel`.** Whatever drives the wheels is outside this repo; don't add or
+discuss anything downstream of it.
 
 ## Build and test
 
-```bash
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install \
-  --packages-select waypoint_interfaces waypoint_manager glim_dump_export pcd2pgm kratos_nav lidar_angle_filter \
-  --cmake-args -DCMAKE_BUILD_TYPE=Release
-source install/setup.bash
+Everything runs in the container (`docker/run_container.sh <cmd>`, working directory
+`/workspaces/kratos_glim`):
 
-colcon test --packages-select waypoint_manager lidar_angle_filter && colcon test-result --verbose
-PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/test/run_all.sh
-KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh
-KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.sh
+```bash
+docker/run_container.sh docker/build_ws.sh
+docker/run_container.sh 'colcon test --packages-select waypoint_manager lidar_angle_filter && colcon test-result --all'
+docker/run_container.sh 'KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh'
+docker/run_container.sh 'MISSION_ARGS="-p mode:=through" KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh'
+docker/run_container.sh 'KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.sh'
+docker/run_container.sh 'PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/test/run_all.sh'
 ```
 
-- Building `livox_ros_driver2` needs the extra steps in the root `README.md`.
-- The shell tests start ROS nodes on their own `ROS_DOMAIN_ID` (43, 44, 45).
-  Run them one at a time.
-- They `pkill` their own node names. Don't run them while a live test is
-  running on the same machine.
+- `build_ws.sh` lists the packages explicitly: add new packages there.
+- The shell tests use `ROS_DOMAIN_ID` 43–45 and `pkill` their own node names: run them one at a
+  time, never during a live run.
+- The ZED and the GPU may be in use by another stack (`~/kratos_nvblox`, a separate project).
+  Only one process can open the ZED; don't start `perception.launch.py` or `start.sh` with a
+  camera while another container runs it.
 
 ## Invariants (breaking these fails silently in the field)
 
-- **LiDAR height `lidar_z` is in four places and must match:**
-  - `src/kratos_nav/launch/nav.launch.py` (arg `lidar_z`)
-  - `src/kratos_nav/config/nav2_params.yaml` (`min/max_obstacle_height`, twice)
-  - `src/pcd2pgm/config/pcd2pgm_live.yaml` (`thre_z_min/max`)
-  - `src/kratos_perception/launch/perception.launch.py` (arg `lidar_z`; nvblox's
-    obstacle band is computed from it) — Jazzy/nvblox branch, see `docs/NVBLOX_JAZZY.md`
-
-  The heights are relative to GLIM's `map` z=0, which is the LiDAR's start
-  height, not the ground.
-- **The TF chain is `map → odom → base_link → {livox_frame, zed_camera_link}`.**
-  - Both mount links are static, from `nav.launch.py`. The ZED must never publish TF
-    (tracking off in `kratos_perception/config/zed2i_glim.yaml`).
-  - nvblox maps in `odom`; its `nvblox_layer` is in the local costmap only.
-  - GLIM publishes the first two links.
-  - The static `base_link → livox_frame` comes from `nav.launch.py` (or a
-    manual `static_transform_publisher`).
-  - Without the static link, GLIM warns every frame and publishes no pose TF.
-- **pcd2pgm live mode uses a fixed grid.**
-  - Origin and size never change at runtime, because Nav2's static layer must
-    not resize.
-  - `/map` cells are only 0 or 100.
-  - An empty filtered cloud keeps the previous `/map`. Never publish an
-    all-free grid.
-  - `/map` QoS is reliable + transient_local + depth 1.
-- **The pcd2pgm radius filter must stay loose** (0.75 m / 2 neighbours).
-  GLIM's map is voxelized at 0.5 m, and tighter values erase every wall.
-- **The glim_ros overlay must be sourced last** in GLIM's terminal. Check with
-  `ros2 pkg prefix glim_ros`.
-- **waypoint_manager:**
-  - Pending (not yet bound to a submap) waypoints are listed as
-    `"<name> (pending)"`, are saved under `pending_waypoints`, and return
-    `found=False` from `/get_waypoint`.
-  - Callers that consume the list must strip the suffix (see
-    `waypoint_mission.py`).
-- **ROS 2 Humble rclpy scripts:**
-  - Use `SignalHandlerOptions.NO` plus explicit SIGINT/SIGTERM handlers, so
-    cleanup (cancel the Nav2 goal) can still run.
-  - After `spin_until_future_complete` times out, poll `future.done()`.
-    Don't rely on `add_done_callback`.
-- **The VM is the runtime.** Its workspaces (`~/Kratos/*_ws`) hold copies of
-  this code. Keep them in sync when you change anything here (the table is in
-  `docs/LIVE_MISSION_TEST.md`).
+- **`lidar_z` in four places must match:** `start.sh lidar_z:=` (→ `nav.launch.py` static TF and
+  `perception.launch.py`, which computes nvblox's slice band), `nav2_params.yaml`
+  (`min/max_obstacle_height`, both costmaps), `pcd2pgm_live.yaml` (`thre_z_min/max`). Heights are
+  relative to GLIM's `map` z=0, the LiDAR's start height; the ground is at −`lidar_z`.
+- **TF chain `map → odom → base_link → {livox_frame, zed_camera_link}`.** GLIM publishes the first
+  two links; both mount links are static, from `nav.launch.py`. The ZED must never track or publish
+  TF (`kratos_perception/config/zed2i_glim.yaml`). Without `base_link → livox_frame`, GLIM
+  publishes no pose TF.
+- **nvblox maps in `odom`, and `nvblox_layer` is in the local costmap only** (GLIM's loop closures
+  move `map → odom`).
+- **GLIM runs without its OpenGL viewer when there is no display** (`kratos.launch.py` writes a
+  config copy without `libstandard_viewer.so`); with the viewer and no display it crashes at start.
+  `librviz_viewer.so` must stay: it publishes `/glim_ros/map`.
+- **The patched `glim_ros` overlay** (`/opt/glim_ros_fix_ws`) is sourced last in the container;
+  check with `ros2 pkg prefix glim_ros`. Without it `/glim_ros/map` gets phantom walls.
+- **pcd2pgm live mode uses a fixed grid** (origin/size never change: Nav2's static layer must not
+  resize). `/map` cells are only 0 or 100; an empty filtered cloud keeps the previous `/map`, never
+  an all-free grid; QoS reliable + transient_local + depth 1. Radius filter stays loose
+  (0.75 m / 2 neighbours): GLIM's map is voxelized at 0.5 m.
+- **waypoint_manager:** pending waypoints are listed as `"<name> (pending)"`, return `found=False`,
+  and are saved under `pending_waypoints`; consumers strip the suffix (`waypoint_mission.py`).
+- **Nav2 (Jazzy):** plugin names use `::`; `nav.launch.py` starts the 7 nodes itself (Jazzy's
+  `navigation_launch.py` adds servers that need their own config); both BT keys must exist in
+  `nav2_params.yaml`, and the trees must not use Spin (the rover can't turn in place).
+- **rclpy scripts:** `SignalHandlerOptions.NO` plus explicit SIGINT/SIGTERM handlers, so the Nav2
+  goal is cancelled on exit; after `spin_until_future_complete` times out, poll `future.done()`.
 
 ## Review hints
 
-- **Placeholders, not bugs (unless the reason is wrong):**
-  - `lidar_z` 0.60
-  - the 0.74 m square footprint
-  - the 50x50 m grid
-- **Not verified on hardware:** the full mission. The
-  rest was verified on the VM with a real LiDAR (GLIM, waypoints, pcd2pgm) or
-  with fakes (`fake_glim.py`).
-- **Not tracked, never commit:** `build/`, `install/`, `log/`, `*.pcd`,
-  `*.pgm`, `maps/`, GLIM dumps.
-- `src/pcd2pgm/config/pcd2pgm.yaml` is file mode (set `pcd_file`), and isn't
-  used by the mission.
-- **Writing docs:** keep them short and concrete, with commands that can be
-  pasted. The VM paths in `docs/` are intentional.
+- **Placeholders, not bugs:** `lidar_z` 0.60, camera mount (`cam_*`), 0.74 m footprint, 50×50 m
+  grid, 0.6 m turning radius.
+- **Not tested on the moving rover.** Tested on the Orin: full bring-up with both sensors (bench),
+  the hardware-free tests.
+- **Never commit:** `build/`, `install/`, `log/`, `maps/`, `.home/`, `*.pcd`, `*.pgm`, GLIM dumps.
+- **Docs:** short and concrete, commands that can be pasted, no filler. `README.md` explains the
+  stack; `docs/FIELD_TEST.md` is the test-day runbook.
