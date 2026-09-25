@@ -2,13 +2,7 @@
 
 Tags waypoints relative to the current submap's own origin instead of a frozen world
 coordinate, so a tagged point automatically rides along with every pose-graph
-loop-closure correction instead of going stale. See the root
-[`WAYPOINT_AND_CONE_GUIDE.md`](../../WAYPOINT_AND_CONE_GUIDE.md) for the broader
-semantic-landmark design this is meant to sit underneath — this module is the
-submap-relative pose-correction piece that guide's section 7.2 flags as not yet
-implemented ("a later production implementation should associate each landmark
-observation with the relevant GLIM keyframe/submap and re-optimize landmark positions
-after loop closure").
+loop-closure correction instead of going stale.
 
 Depends only on `glim` and our own `waypoint_interfaces` package — no dependency on the
 now-removed `FASTLIO2_ROS2/interface` package.
