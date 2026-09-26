@@ -10,6 +10,9 @@ Nav2 for the Kratos rover. It uses GLIM for localization and pcd2pgm's live
 | `behavior_trees/*_no_spin.xml` | Default BTs with the Spin recovery removed (the rover can't turn in place) |
 | `scripts/waypoint_mission.py` | Drives to GLIM waypoints in order with `navigate_to_pose`. Re-queries `/get_waypoint` every 2 s and re-sends the goal if the waypoint moved more than 0.3 m (loop closure) |
 | `scripts/rover_bridge.py` | The only writer of `/rover` (ESP32 wheel PWM). MANUAL passes the joystick through (`/rover_joy`); AUTO converts `/cmd_vel` to open-loop diff drive |
+| `launch/livox_driver.launch.py`, `launch/lidar_ip.py` | Finds the MID-360 on 192.168.1.100-199 (only REACHABLE neighbour entries count), writes a runtime copy of the driver config with that IP, starts `livox_ros_driver2`. `LIVOX_LIDAR_IP` forces an address |
+| `scripts/bringup_monitor.py` | Used by `bringup.sh`: relays the important log lines, writes the `health` file, prints status lines and alerts |
+| `config/kratos_live.rviz` | RViz layout for the live mission (`/map`, GLIM map + waypoints, plans, global costmap) |
 | `test/` | Hardware-free tests. See `test/README.md` |
 
 ## Run

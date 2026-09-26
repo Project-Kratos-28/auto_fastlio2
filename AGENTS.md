@@ -52,6 +52,8 @@ source install/setup.bash
 
 colcon test --packages-select waypoint_manager lidar_angle_filter && colcon test-result --verbose
 python3 src/kratos_nav/test/test_rover_bridge.py
+python3 src/kratos_nav/test/test_lidar_ip.py
+bash -n bringup.sh && ./bringup.sh --check   # pre-flight only, starts nothing
 PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/test/run_all.sh
 KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh
 KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.sh

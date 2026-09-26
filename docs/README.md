@@ -2,6 +2,8 @@
 
 Runbooks for the GLIM + pcd2pgm + Nav2 mission stack. Start with
 **`LIVE_MISSION_TEST.md`**; it is the one to follow on test day.
+To start the whole stack in one terminal: **`./bringup.sh`** at the repo root
+(`--help` for options, `--check` for the pre-flight checks only).
 
 | Doc | Use it for | Status |
 |---|---|---|

@@ -6,8 +6,9 @@ Starts the two things Nav2 needs that nobody else publishes:
      velocity_smoother) through nav2_bringup's navigation_launch.py.
 
 Deliberately NOT started: map_server (pcd2pgm publishes /map live) and AMCL
-(GLIM publishes map->odom). Driver, angle filter, GLIM and pcd2pgm run in their
-own terminals; see docs/subsystem/LIVE_MISSION_TEST.md (background/design: NAV2_BRINGUP.md).
+(GLIM publishes map->odom). Driver, angle filter, GLIM and pcd2pgm run as their
+own processes: bringup.sh at the repo root starts everything in order (manual steps:
+docs/LIVE_MISSION_TEST.md, background/design: docs/NAV2_BRINGUP.md).
 
 Run:  ros2 launch kratos_nav nav.launch.py
 """

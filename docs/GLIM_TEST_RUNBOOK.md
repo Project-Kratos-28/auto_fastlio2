@@ -32,13 +32,13 @@ sudo ifconfig bridge100 addm en11
 
 ### 0b. In the VM
 ```bash
-sudo ip addr add 192.168.1.50/24 dev enp0s1
-ip -br addr show enp0s1             # should now list 192.168.1.50/24 alongside 192.168.64.6/24
+sudo ip addr add 192.168.1.10/24 dev enp0s1
+ip -br addr show enp0s1             # should now list 192.168.1.10/24 alongside 192.168.64.6/24
 ```
 
 ### 0c. Verify LiDAR is reachable (VM)
 ```bash
-ip neigh | grep 192.168.1.125      # a resolved MAC (lladdr ...) = success. "ping" does NOT work, don't use it.
+ip neigh | grep 192.168.1.162      # a resolved MAC (lladdr ...) = success. "ping" does NOT work, don't use it.
 ```
 
 ---

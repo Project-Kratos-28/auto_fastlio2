@@ -7,6 +7,8 @@
 
 using lidar_angle_filter::degrees_to_radians;
 using lidar_angle_filter::point_is_masked;
+using lidar_angle_filter::point_is_usable;
+using lidar_angle_filter::scan_has_enough_points;
 
 namespace
 {
@@ -166,4 +168,37 @@ TEST(AngleFilter, AppliesIndependentFrontAndBackWidths)
   EXPECT_FALSE(point_is_masked(x, y, 0.0, 10.0, 60.0)) << "just outside wide back";
 }
 
+TEST(ScanGate, PointsInsideMinRangeOrNonFiniteAreNotUsable)
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(point_is_usable(0.3, 0.0, 0.0, 0.7));   // hand on the sensor
+  EXPECT_FALSE(point_is_usable(0.0, 0.0, 0.0, 0.7));   // no return
+  EXPECT_FALSE(point_is_usable(nan, 1.0, 1.0, 0.7));
+  EXPECT_TRUE(point_is_usable(0.7, 0.0, 0.0, 0.7));    // exactly at the limit
+  EXPECT_TRUE(point_is_usable(3.0, 4.0, 0.0, 0.7));
+  EXPECT_TRUE(point_is_usable(0.0, 0.0, -1.0, 0.7));
+}
+
+TEST(ScanGate, NeedsEnoughUsablePoints)
+{
+  EXPECT_FALSE(scan_has_enough_points(0, 500));
+  EXPECT_FALSE(scan_has_enough_points(499, 500));
+  EXPECT_TRUE(scan_has_enough_points(500, 500));
+  EXPECT_TRUE(scan_has_enough_points(0, 0));           // gate disabled
+}
+
 }  // namespace
+
+TEST(ElevationWindow, KeepsOnlyPointsInsideTheVerticalWindow)
+{
+  using lidar_angle_filter::point_in_elevation_range;
+  // 1 m out horizontally: z = tan(elevation).
+  EXPECT_FALSE(point_in_elevation_range(1.0, 0.0, -0.5, 5.0, 53.0));   // below the sensor
+  EXPECT_FALSE(point_in_elevation_range(1.0, 0.0, 0.0, 5.0, 53.0));    // horizontal
+  EXPECT_FALSE(point_in_elevation_range(1.0, 0.0, 0.05, 5.0, 53.0));   // ~2.9 deg
+  EXPECT_TRUE(point_in_elevation_range(1.0, 0.0, 0.2, 5.0, 53.0));     // ~11 deg
+  EXPECT_TRUE(point_in_elevation_range(0.0, -1.0, 1.0, 5.0, 53.0));    // 45 deg, any azimuth
+  EXPECT_FALSE(point_in_elevation_range(1.0, 0.0, 2.0, 5.0, 53.0));    // ~63 deg
+  EXPECT_TRUE(point_in_elevation_range(1.0, 0.0, -3.0, -90.0, 90.0));  // defaults keep all
+  EXPECT_TRUE(point_in_elevation_range(NAN, 0.0, 0.0, 5.0, 53.0));     // left to the scan gate
+}

@@ -222,8 +222,8 @@ The checked-in driver configuration expects:
 
 | Device | IPv4 address |
 |---|---|
-| Computer Ethernet adapter | `192.168.1.50/24` |
-| MID-360 | `192.168.1.125` |
+| Computer Ethernet adapter | `192.168.1.10/24` |
+| MID-360 | `192.168.1.162` |
 
 Configure the wired adapter with the desktop network settings. No particular network
 connection profile or interface name is required. Confirm the resulting address and
@@ -231,11 +231,16 @@ sensor connectivity:
 
 ```bash
 ip -brief address
-ping -c 3 192.168.1.125
+ping -c 3 192.168.1.162
 ```
 
-If a computer or sensor uses different addresses, update all host address fields and
-the sensor `ip` field in `src/livox_ros_driver2/config/MID360_config.json` before
+The MID-360's own address differs per unit (192.168.1.1xx, from its serial).
+`bringup.sh` and `ros2 launch kratos_nav livox_driver.launch.py` find it
+automatically (set `LIVOX_LIDAR_IP` to force one). Only the host address fields
+(`*_ip` in `host_net_info`) in `src/livox_ros_driver2/config/MID360_config.json`
+must be this computer's address; `bringup.sh` checks that. The stock
+`rviz_MID360_launch.py` still uses the sensor `ip` written in that file. If a
+computer uses a different address, update all host address fields before
 building the driver again.
 
 ## 2. Create a map with GLIM
@@ -581,11 +586,29 @@ terminal-by-terminal bring-up, checks and troubleshooting are in
 | Navigation | `src/kratos_nav` | `nav.launch.py`: Nav2 without map_server/AMCL plus the static `base_link -> livox_frame` TF. `waypoint_mission.py`: drives to each GLIM waypoint in order |
 | Wheel interface | `src/kratos_nav/scripts/rover_bridge.py` | `/cmd_vel` -> the rover's `/rover` PWM topic, with joystick passthrough. **Untested on hardware** |
 | GLIM bug fix | `glim/glim_ros_fix` | Patch + overlay for the GLIM 1.2.2 `/glim_ros/map` corruption |
+| Bring-up | `bringup.sh` (repo root) | Starts and supervises the whole stack in one terminal (below) |
+| LiDAR driver launch | `src/kratos_nav/launch/livox_driver.launch.py` | Finds the MID-360's IP (it differs per unit), then starts `livox_ros_driver2` |
 
-Minimal order (each line in its own terminal, after `source install/setup.bash`):
+**One command (what the GUI button runs):** from the repo root,
 
 ```bash
-ros2 launch livox_ros_driver2 rviz_MID360_launch.py
+./bringup.sh              # --help for options: --lidar-z, --no-rviz, --check, ...
+```
+
+It first checks the setup: packages built, patched GLIM overlay, `lidar_z` consistent
+in all three files, this computer has 192.168.1.10, no leftover stack processes. Then
+it finds the MID-360 and starts driver -> angle filter -> Nav2 -> GLIM -> pcd2pgm ->
+`rover_bridge` (MANUAL) -> RViz, each only after the previous one is verified. While
+running it prints a status line every 15 s and an ALERT when something breaks, and
+restarts crashed stateless nodes (never GLIM, which holds the waypoints). Ctrl+C saves
+the waypoints to the log folder and stops everything in reverse order. Logs, plus
+`state` and `health` files for the GUI, are in `~/kratos_logs/latest/`.
+`./bringup.sh --check` runs only the checks.
+
+The manual equivalent (each line in its own terminal, after `source install/setup.bash`):
+
+```bash
+ros2 launch kratos_nav livox_driver.launch.py      # finds the MID-360 IP
 ros2 launch lidar_angle_filter angle_filter.launch.py
 ros2 launch kratos_nav nav.launch.py                 # BEFORE GLIM (static TF)
 # GLIM (section 2.3; source the glim_ros_fix overlay last)
@@ -618,7 +641,8 @@ session, export the dump to PCD (section 5), run `pcd2pgm_node` in file mode
 | `glim/glim_ext_addon/` | `waypoint_manager` GLIM extension, `waypoint_interfaces`, `glim_dump_export` |
 | `glim/glim_ros_fix/` | Patch + overlay build for the GLIM 1.2.2 `/glim_ros/map` bug |
 | `src/pcd2pgm/` | Point cloud -> `OccupancyGrid` node; live mode follows `/glim_ros/map` on a fixed grid |
-| `src/kratos_nav/` | Nav2 config/launch, `waypoint_mission.py`, `rover_bridge.py`, hardware-free tests |
+| `bringup.sh` | One-terminal bring-up of the live mission stack (section 6) |
+| `src/kratos_nav/` | Nav2 config/launch, LiDAR driver launch, `waypoint_mission.py`, `rover_bridge.py`, bring-up monitor, hardware-free tests |
 | `docs/` | Mission overview, live-test runbooks, design notes |
 | `AGENTS.md` | Orientation for AI assistants and reviewers (`CLAUDE.md` points to it) |
 | `src/FAST_LIO/` | FAST-LIO2 (earlier approach; not used by the GLIM pipeline) |

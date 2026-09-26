@@ -19,7 +19,8 @@ By default the script sources `~/Kratos/glim_ext_ws/install/setup.bash` and
 at the workspace(s) that contain `waypoint_interfaces` and `kratos_nav`:
 `KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh`.
 The same applies to `mission_edge_test.sh`. `test_rover_bridge.py` needs only
-Python: `python3 src/kratos_nav/test/test_rover_bridge.py`.
+Python: `python3 src/kratos_nav/test/test_rover_bridge.py`. So does the LiDAR IP
+detection: `python3 src/kratos_nav/test/test_lidar_ip.py`.
 
 Only one instance at a time - the VM is shared (4 cores / 7.7 GB, other
 agents run here too). Logs go to `/tmp/kratos_nav_e2e/` (`fake.log`,

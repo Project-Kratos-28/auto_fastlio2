@@ -95,10 +95,18 @@ Nav2     ──/cmd_vel────► rover_bridge
   ```
 - [ ] **Hardware connected.** MID-360 plugged in, then (neither step survives a reboot):
   - Mac: `ifconfig en11 | grep status` must say active, then `sudo ifconfig bridge100 addm en11`
-  - VM: `sudo ip addr add 192.168.1.50/24 dev enp0s1` (skip if `ip -br addr show enp0s1` already lists it)
-  - Check on the VM with `ip neigh | grep 192.168.1.125`: a resolved MAC means it works. **`ping` fails even when it works**, so don't use it.
+  - VM: `sudo ip addr add 192.168.1.10/24 dev enp0s1` (skip if `ip -br addr show enp0s1` already lists it)
+  - Check on the VM with `ip neigh | grep 192.168.1.162`: a resolved MAC means it works. **`ping` fails even when it works**, so don't use it.
 
 ## 1. Start everything (on the VM, one terminal each, IN THIS ORDER)
+
+> **On the rover (Orin), or anywhere the repo is built: run `./bringup.sh` from the
+> repo root instead of T1-T6 and the bridge in T8.** The GUI button does exactly
+> this. It starts them in this order, checks each one, and keeps the rover still
+> while GLIM initializes (it says when). At READY it prints the tag / mission /
+> AUTO commands. Stop it with Ctrl+C: it saves the waypoints first. `drive.py`, the
+> micro-ROS agent and `joy_node` are NOT started by it: start them as in T8. The
+> terminals below are the manual fallback and help with debugging.
 
 Every terminal first runs:
 ```bash
@@ -109,6 +117,7 @@ source /opt/ros/humble/setup.bash
 ```bash
 source ~/Kratos/auto_fastlio2/install/setup.bash
 ros2 launch livox_ros_driver2 rviz_MID360_launch.py
+# a MID-360 other than .162: ros2 launch kratos_nav livox_driver.launch.py finds its IP
 ```
 
 **T2: angle filter**
