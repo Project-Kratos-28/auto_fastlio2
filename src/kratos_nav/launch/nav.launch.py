@@ -46,7 +46,7 @@ def generate_launch_description():
     pkg = get_package_share_directory('kratos_nav')
     arg = LaunchConfiguration
 
-    # BT xml paths have to be absolute, and they differ per machine, so fill them
+    # BT xml and lattice paths have to be absolute, and they differ per machine, so fill them
     # in at launch time instead of hardcoding them in the yaml. BOTH must be set:
     # the stock through-poses tree calls Spin, which we don't load, and
     # bt_navigator refuses to activate if any tree references a missing server.
@@ -56,6 +56,8 @@ def generate_launch_description():
         param_rewrites={
             'default_nav_to_pose_bt_xml': os.path.join(bt_dir, 'navigate_no_spin.xml'),
             'default_nav_through_poses_bt_xml': os.path.join(bt_dir, 'navigate_through_poses_no_spin.xml'),
+            # Smac Lattice motion primitives (planner_server GridBased).
+            'lattice_filepath': os.path.join(pkg, 'config', 'lattice', 'output.json'),
         },
         convert_types=True,
     )

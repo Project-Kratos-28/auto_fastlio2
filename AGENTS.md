@@ -22,6 +22,7 @@ Everything runs in the container (`docker/run_container.sh <cmd>`, working direc
 ```bash
 docker/run_container.sh docker/build_ws.sh
 docker/run_container.sh 'colcon test --packages-select waypoint_manager lidar_angle_filter && colcon test-result --all'
+docker/run_container.sh python3 src/kratos_bringup/test/test_lidar_ip.py
 docker/run_container.sh 'KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh'
 docker/run_container.sh 'MISSION_ARGS="-p mode:=through" KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/e2e_test.sh'
 docker/run_container.sh 'KRATOS_SETUP=$PWD/install/setup.bash bash src/kratos_nav/test/mission_edge_test.sh'
@@ -60,14 +61,16 @@ docker/run_container.sh 'PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/
   and are saved under `pending_waypoints`; consumers strip the suffix (`waypoint_mission.py`).
 - **Nav2 (Jazzy):** plugin names use `::`; `nav.launch.py` starts the 7 nodes itself (Jazzy's
   `navigation_launch.py` adds servers that need their own config); both BT keys must exist in
-  `nav2_params.yaml`, and the trees must not use Spin (the rover can't turn in place).
+  `nav2_params.yaml`, and the trees must not use Spin or BackUp (the rover must never reverse; pivots are
+  slow: only RotationShim's one pivot per goal; RPP itself must not pivot). `lattice_filepath` is filled in by `nav.launch.py`, and
+  `config/lattice/output.json` must match the costmap resolution (0.05).
 - **rclpy scripts:** `SignalHandlerOptions.NO` plus explicit SIGINT/SIGTERM handlers, so the Nav2
   goal is cancelled on exit; after `spin_until_future_complete` times out, poll `future.done()`.
 
 ## Review hints
 
-- **Placeholders, not bugs:** `lidar_z` 0.60, camera mount (`cam_*`), 0.74 m footprint, 50×50 m
-  grid, 0.6 m turning radius.
+- **Placeholders, not bugs:** `lidar_z` 0.60, camera mount (`cam_*`), 50×50 m grid, 1.0 m lattice
+  arc radius, RPP speeds.
 - **Not tested on the moving rover.** Tested on the Orin: full bring-up with both sensors (bench),
   the hardware-free tests.
 - **Never commit:** `build/`, `install/`, `log/`, `maps/`, `.home/`, `*.pcd`, `*.pgm`, GLIM dumps.

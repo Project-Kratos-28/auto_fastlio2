@@ -6,8 +6,9 @@ Nav2 for the Kratos rover. It uses GLIM for localization and pcd2pgm's live
 | File | What it does |
 |---|---|
 | `launch/nav.launch.py` | Nav2 `navigation_launch.py` (**no** map_server or AMCL) plus the static TF `base_link -> livox_frame` (args `lidar_x`, `lidar_z`, default 0.60) |
-| `config/nav2_params.yaml` | Global costmap static layer on `/map` (from pcd2pgm), 6x6 m rolling local costmap, Smac Hybrid (DUBIN, radius 0.6), RPP without rotate-in-place, `odom_topic: /glim_ros/odom` |
-| `behavior_trees/*_no_spin.xml` | Default BTs with the Spin recovery removed (the rover can't turn in place) |
+| `config/nav2_params.yaml` | Global costmap static layer on `/map` (from pcd2pgm), 6x6 m rolling local costmap, Smac State Lattice (diff-drive primitives in `config/lattice/`, forward only, pivots penalised), RotationShim (one slow pivot per new goal) + RPP, no reversing, `odom_topic: /glim_ros/odom` |
+| `behavior_trees/*_no_spin.xml` | Default BTs with the Spin and BackUp recoveries removed (never reverse; pivots are slow) |
+| `config/lattice/` | Smac Lattice motion primitives (`output.json`) and the generator config that made them. See `config/lattice/README.md` |
 | `scripts/waypoint_mission.py` | Drives to GLIM waypoints in order with `navigate_to_pose`, or as one route with `navigate_through_poses` (`mode:=through`). Re-queries `/get_waypoint` every 2 s and re-sends the goal if the waypoint moved more than 0.3 m (loop closure) |
 | `test/` | Hardware-free tests. See `test/README.md` |
 
@@ -49,7 +50,7 @@ timeout is cancelled too.
 | Value | Where | Placeholder |
 |---|---|---|
 | LiDAR height `lidar_z` | `nav.launch.py`, `nav2_params.yaml` (`min/max_obstacle_height`), `src/pcd2pgm/config/pcd2pgm_live.yaml` (`thre_z_min/max`) | 0.60 m. **Change all three together** |
-| Footprint | `nav2_params.yaml` (global and local costmap) | 0.74 x 0.74 m square |
+| Footprint | `nav2_params.yaml` (global and local costmap) | measured: 1.3 x 1.2 m (length x width) + 0.05 m padding |
 
 ## Tests
 

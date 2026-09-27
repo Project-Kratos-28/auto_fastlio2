@@ -11,7 +11,7 @@ Test-day procedure on the rover's Orin. Setup: [`README.md`](../README.md); sett
       `lidar_z:=<value>` to `start.sh`. Example: 0.55 → −0.35 / 1.25.
 - [ ] **Measure the ZED mount** (`cam_x`, `cam_y`, `cam_z` from `base_link` on the ground under the
       turning centre; `cam_pitch` down-tilt in rad) and pass them to `start.sh`.
-- [ ] **Footprint** (0.74 × 0.74 m placeholder): `footprint` in `nav2_params.yaml`, both costmaps.
+- [ ] **Footprint** (measured 1.3 × 1.2 m, base_link at the centre): check nothing sticks out past it (arm, mast, antennas); `footprint` in `nav2_params.yaml`, both costmaps.
 - [ ] **Map grid** covers the arena: `fixed_*` in `pcd2pgm_live.yaml` (default 50×50 m around the start).
 - [ ] **Network**: `end0` is `192.168.1.50/24`, `ping 192.168.1.162` answers; laptop on the same
       `ROS_DOMAIN_ID` (`ros_network.env`).
@@ -79,7 +79,7 @@ ros2 topic echo /cmd_vel        # second shell
 Pass:
 - `-> 'wp1' at (x, y)` with the x/y from `/get_waypoint`.
 - A green path to wp1 in RViz that follows curves.
-- `/cmd_vel` has `linear.x > 0`, and never `linear.x = 0` with `angular.z ≠ 0` for long (spin in place).
+- `/cmd_vel` never has `linear.x < 0` (no reversing). `linear.x = 0` with `angular.z ≠ 0` (pivot) only at the start of a goal, at |angular.z| ≤ 0.3, when the path starts > 45° off the heading.
 - After ~15 s without progress Nav2 aborts: `failed 'wp1' (status 6)`. Expected, the rover didn't move.
 
 Ctrl+C cancels the goal.
@@ -99,8 +99,8 @@ Real autonomy is the same mission with the wheels listening to `/cmd_vel`.
 - measured `lidar_z` and camera mount; whether the floor stayed clear in both costmaps
 - any waypoint that jumped, and by how much
 - planner failures and where (tight spot, goal near a wall)
-- turning radius on full lock (`minimum_turning_radius`, 0.6 m placeholder)
-- ESS rate (`logs.sh ess_stereo`: `latency ms ... fill`)
+- whether pivots in place are OK on this ground (slip, stalls), and the tightest comfortable arc (Lattice primitives use 1.0 m: `config/lattice/README.md`)
+- depth rate: `ros2 topic hz /zed/zed_node/depth/depth_registered` (ESS: `logs.sh ess_stereo`, `latency ms ... fill`)
 
 ## 7. Stop
 
@@ -112,8 +112,9 @@ Real autonomy is the same mission with the wheels listening to `/cmd_vel`.
 | Symptom | Cause → fix |
 |---|---|
 | `start.sh`: `ERROR: container ... is running the ZED` | Another stack holds the camera. Stop it, or `depth:=none` |
-| `start.sh`: `MID-360 not answering` | `end0` address / cable. `ip -br addr show end0` must list `192.168.1.50/24` |
-| No `/livox/lidar` | Wrong LiDAR IP in `MID360_config.json`: a MID-360 is `192.168.1.1XX`, XX = last two digits of its serial |
+| `start.sh`: `no MID-360 answering` | `end0` address / cable. `ip -br addr show end0` must list `192.168.1.50/24` |
+| No `/livox/lidar` | Wrong LiDAR picked (launch log: `MID-360 at ...`): force it with `LIVOX_LIDAR_IP=192.168.1.1XX ./start.sh`, XX = last two digits of its serial |
+| GLIM log goes quiet, angle filter warns `Dropping scan` | LiDAR covered or blocked (< 120 points beyond 0.7 m): scans are held back so GLIM doesn't abort; uncover it |
 | GLIM log: `Failed to lookup transform ... livox_frame ... base_link` | Static TF missing: `nav.launch.py` not up |
 | GLIM crashes at start: `failed to initialize GLFW` | `gui:=true` without a display; use `gui:=auto`/`false` |
 | `/map` never appears | GLIM publishes its map after its first submap: drive a few metres |
@@ -121,7 +122,7 @@ Real autonomy is the same mission with the wheels listening to `/cmd_vel`.
 | pcd2pgm: `keeping the previous /map` every update | Nothing in the height band: `lidar_z` / `thre_z_*` wrong |
 | Straight "sheets" or walls in `/map` where nothing exists | GLIM without the fix overlay: `ros2 pkg prefix glim_ros` must be `/opt/glim_ros_fix_ws/...` |
 | Floor shows as obstacles | Height band wrong (`lidar_z`) or camera mount/pitch wrong |
-| No nvblox obstacles | `ros2 topic hz /ess/depth`; `tf2_echo odom zed_left_camera_frame_optical` must resolve |
+| No nvblox obstacles | `ros2 topic hz /zed/zed_node/depth/depth_registered` (ESS: `/ess/depth`); `tf2_echo odom zed_left_camera_frame_optical` must resolve |
 | ZED fails: `NOT VALID SERIAL NUMBER FOR SENSORS MODULE` | ZED HID interface unbound: `stop.sh`, `tools/zed_hid_rebind.sh`, `start.sh` |
 | `add_waypoint` → service not available | GLIM not running or `waypoint_manager` not loaded (`load libwaypoint_manager.so` in the log) |
 | `add_waypoint` → `no odometry yet` | GLIM gets no data: check 1–2 in section 2 |

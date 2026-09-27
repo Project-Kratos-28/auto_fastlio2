@@ -23,9 +23,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
     mkdir -p "$REPO/.home"
     # ZED SDK data shared with ~/kratos_nvblox: optimized NEURAL models (minutes to rebuild per
     # container otherwise) and the camera calibration.
-    # kratos_nvblox sits next to this repo (e.g. ~/Auto_Stack/kratos_nvblox)
-    NVBLOX="${KRATOS_NVBLOX:-$(dirname "$REPO")/kratos_nvblox}"
-    ZED_DATA="${KRATOS_ZED_DATA:-$NVBLOX/zed}"
+    ZED_DATA="${KRATOS_ZED_DATA:-$HOME/kratos_nvblox/zed}"
     mkdir -p "$ZED_DATA/resources" "$ZED_DATA/settings"
     docker run -d --rm --name "$NAME" \
         --privileged --network host --ipc host --runtime nvidia --gpus all \
@@ -37,7 +35,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
         -v /usr/bin/tegrastats:/usr/bin/tegrastats \
         -v /usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/tegra \
         -v "$REPO":/workspaces/kratos_glim \
-        -v "$NVBLOX":/workspaces/kratos_nvblox \
+        -v "$HOME/kratos_nvblox":/workspaces/kratos_nvblox \
         -v "$ZED_DATA/resources":/usr/local/zed/resources \
         -v "$ZED_DATA/settings":/usr/local/zed/settings \
         --entrypoint /bin/bash kratos/glim_nvblox:latest -c 'sleep infinity' >/dev/null

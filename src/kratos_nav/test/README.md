@@ -48,14 +48,14 @@ Audited against the real interfaces (`waypoint_interfaces` srv package,
 | TF `map -> odom` | published every frame (dynamic), can move on loop closure | published every tick via a regular (non-static) broadcaster - a static transform never goes stale, which would hide a GLIM TF stall from Nav2's `transform_tolerance` |
 | TF `odom -> base_link` | continuous | integrated from `/cmd_vel` |
 | `/glim_ros/odom` | `nav_msgs/Odometry`, `child_frame_id` = auto-detected IMU frame (NOT `base_link`) | published (the original fake never published this topic at all, despite `nav2_params.yaml`'s `bt_navigator`/`controller_server`/`velocity_smoother` all setting `odom_topic: /glim_ros/odom`); `child_frame_id` kept as a non-`base_link` value to match the real oddity |
-| Obstacles | whatever GLIM has mapped | one wall segment, `x in [1.4, 1.6]`, `y in [-2.0, 2.0]` in `/map`, directly blocking the straight line from the start pose to `wp1` - forces `SmacPlannerHybrid` to actually plan a detour instead of driving a straight line on an empty grid |
+| Obstacles | whatever GLIM has mapped | one wall segment, `x in [1.4, 1.6]`, `y in [-2.0, 2.0]` in `/map`, directly blocking the straight line from the start pose to `wp1` - forces `SmacPlannerLattice` to actually plan a detour instead of driving a straight line on an empty grid |
 | Loop closure | pose graph correction moves a submap | `wp1` moves +0.5 m in x on its 4th `/get_waypoint` query (unchanged from the original fake) |
 
 `fake_glim.py` also self-checks that the simulated robot pose never comes
-within `ROBOT_COLLISION_RADIUS` (0.40 m, approximating the footprint
-half-width + padding in `nav2_params.yaml`) of the wall's occupied cells; a
+within `ROBOT_COLLISION_RADIUS` (0.65 m, the footprint
+half-width 0.60 m + 0.05 m padding in `nav2_params.yaml`) of the wall's occupied cells; a
 violation logs `COLLISION: ...` to `fake.log`, which `e2e_test.sh` greps for
-and fails on. This is a circle-vs-rectangle approximation of the square
+and fails on. This is a circle-vs-rectangle approximation of the rectangular
 footprint, not exact.
 
 ## Known simplifications (not fixed - out of scope for this test)

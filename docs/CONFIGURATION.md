@@ -23,10 +23,11 @@ by 3.5 cm at 2 m; ground that rises into the band becomes an obstacle.
 
 | File | Setting |
 |---|---|
-| `nav2_params.yaml` | footprint 0.74 × 0.74 m (**placeholder**), Smac Hybrid-A* (Dubins, min. turn radius 0.6 m), Regulated Pure Pursuit 0.4 m/s without rotate-in-place, local costmap 6×6 m (LiDAR + nvblox), global costmap `/map` + LiDAR |
-| `behavior_trees/*_no_spin.xml` | Jazzy default trees without Spin (the rover can't turn in place) |
+| `nav2_params.yaml` | footprint 1.3 × 1.2 m (measured, + 0.05 m padding), LiDAR `obstacle_min_range` 0.8 m, Smac State Lattice (diff-drive primitives, 1.0 m arcs, forward only, pivots penalised), RotationShim (one 0.3 rad/s pivot per new goal if > 45° off) + Regulated Pure Pursuit 0.4 m/s, no reversing, local costmap 6×6 m (LiDAR + nvblox), global costmap `/map` + LiDAR |
+| `behavior_trees/*_no_spin.xml` | Jazzy default trees without Spin or BackUp (never reverse; pivots are slow) |
+| `config/lattice/output.json` | Smac Lattice motion primitives; regenerate if the costmap resolution or arc radius changes (`config/lattice/README.md`) |
 | `pcd2pgm_live.yaml` | fixed grid origin (−25, −25), 50×50 m, 0.05 m: size it to the whole arena; points outside are dropped. Radius filter 0.75 m / 2 neighbours (GLIM's map is voxelized at 0.5 m; tighter values erase walls) |
-| `lidar_angle_filter/config/angle_filter.yaml` | masked sectors (full widths), `front_center_deg` if LiDAR +X isn't rover-forward |
+| `lidar_angle_filter/config/angle_filter.yaml` | masked sectors (full widths), `front_center_deg` if LiDAR +X isn't rover-forward; scan gate (`min_usable_points` 120 beyond `min_usable_range` 0.7 m, else the scan is dropped: GLIM aborts on an empty scan); elevation window (−90..90 on the rover; 5..53 for a handheld test) |
 | `glim/glim_config/config.json` | CPU modules (odometry CPU, sub-mapping passthrough, pose-graph global mapping). `config_global_mapping_pose_graph.json`: `min_travel_dist` 8 m (stock 50 m never closes loops in small areas) |
 | `glim/glim_config/config_ros.json` | `base_frame_id: base_link`, topics, extension modules (`libwaypoint_manager.so`) |
 | `kratos_perception/config/zed2i_glim.yaml` | ZED: HD720, 15 Hz published, **tracking and TF off** (GLIM owns the pose) |
@@ -49,6 +50,10 @@ On the laptop: same domain ID and RMW; Humble: `ROS_LOCALHOST_ONLY` unset; Jazzy
 waypoint services. View the rover with `rviz2 -d src/kratos_bringup/rviz/laptop.rviz`: only `/map`,
 costmaps, TF, `/plan` and odometry, which are light over the radio. Point clouds, images and the
 nvblox mesh are not (1280×720 color is tens of MB/s). "2D Goal Pose" sends a Nav2 goal.
+
+To see point clouds on the laptop, start the rover with `cloudini:=true`: it also publishes
+Cloudini-compressed `/glim_ros/points/compressed` and `/glim_ros/map/compressed`, decoded by the
+laptop GUI. Details, contract and limits: [`CLOUDINI.md`](CLOUDINI.md).
 Humble ↔ Jazzy is not officially supported by ROS; standard messages and these services work over
 Fast DDS, but test before relying on it.
 

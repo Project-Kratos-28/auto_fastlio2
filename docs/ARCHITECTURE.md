@@ -8,7 +8,7 @@ Livox MID-360 ─► livox_ros_driver2 ─► /livox/lidar ─┬─► lidar_an
                                                     └─► Nav2 obstacle_layer (local + global costmap)
 GLIM (+ waypoint_manager) ─► TF map→odom→base_link, /glim_ros/odom, /glim_ros/map, waypoint services
 /glim_ros/map ─► pcd2pgm (live) ─► /map ─► Nav2 global costmap
-ZED 2i ─► ESS depth (or ZED NEURAL) ─► nvblox (odom frame) ─► /nvblox_node/static_map_slice ─► Nav2 local costmap
+ZED 2i ─► ZED NEURAL depth (or ESS) ─► nvblox (odom frame) ─► /nvblox_node/static_map_slice ─► Nav2 local costmap
 waypoint_mission.py ─► Nav2 navigate_to_pose / navigate_through_poses ─► /cmd_vel
 ```
 
@@ -30,11 +30,12 @@ Everything runs in one Docker container (`kratos_glim`), started by `start.sh`.
 | Order | Component | Output |
 |---|---|---|
 | 1 | `livox_ros_driver2` | `/livox/lidar` (PointCloud2, 10 Hz), `/livox/imu` (200 Hz) |
-| 2 | `lidar_angle_filter` | `/livox/lidar_filtered`: ±15° front and back removed (antenna) |
+| 2 | `lidar_angle_filter` | `/livox/lidar_filtered`: ±15° front and back removed (antenna); scans of a covered LiDAR dropped |
 | 3 | `kratos_nav/nav.launch.py` | static TF `base_link → livox_frame`, `base_link → zed_camera_link`; Nav2 |
 | 4 | GLIM (3 s later, after the static TF) | TF `map → odom → base_link`, `/glim_ros/odom`, `/glim_ros/map`, waypoint services |
 | 5 | `pcd2pgm` (live) | `/map` |
-| 6 | `kratos_perception` | ZED 2i, ESS, nvblox → `/nvblox_node/static_map_slice` |
+| 6 | `kratos_perception` | ZED 2i, NEURAL or ESS depth, nvblox → `/nvblox_node/static_map_slice` |
+| 7 | Cloudini (`cloudini:=true`) | `/glim_ros/points/compressed`, `/glim_ros/map/compressed` |
 | 7 | RViz (`kratos_bringup/rviz/kratos.rviz`) | only with a GUI |
 
 Nav2 is 7 nodes (controller, smoother, planner, behaviors, bt_navigator, waypoint_follower,
@@ -43,7 +44,7 @@ monitor and docking servers that abort the bringup without their own config. Con
 behaviors publish `cmd_vel_nav`; the velocity smoother publishes the final `/cmd_vel`.
 
 Measured on the Orin with both sensors: GLIM odometry 10 Hz, its TF ~120 ms behind real time;
-ZED 15 Hz; ESS ~40 ms/frame with TTA (processes ~11–15 Hz), ~20 ms without (27–28 Hz); nvblox
+ZED 15 Hz (NEURAL depth rate not measured yet); ESS ~40 ms/frame with TTA (processes ~11–15 Hz), ~20 ms without (27–28 Hz); nvblox
 slice ~9–12 Hz; CPU 30–60 % per core, GPU ~37 %, RAM 11 GB of 62 GB.
 
 ## Known limits
@@ -55,8 +56,8 @@ slice ~9–12 Hz; CPU 30–60 % per core, GPU ~37 %, RAM 11 GB of 62 GB.
 - **No relocalization:** waypoints and the map live only in the running GLIM session.
 - **GLIM aborts on full LiDAR occlusion** (e.g. a hand over the sensor).
 - **Fixed 50×50 m grid** around GLIM's start: size it to the arena.
-- **ESS with TTA skips ~¼ of the camera's frames**; enough for the rover's speed.
-- **Placeholders:** `lidar_z`, camera mount, footprint, grid size, turning radius.
+- **ESS (`depth:=ess`) with TTA skips ~¼ of the camera's frames**; enough for the rover's speed.
+- **Placeholders:** `lidar_z`, camera mount, grid size, lattice arc radius, speeds.
 - **Not tested on the moving rover yet.** Tested on the Orin: all of the above bring-up with both
   sensors (bench), and the hardware-free tests.
 
@@ -68,7 +69,7 @@ slice ~9–12 Hz; CPU 30–60 % per core, GPU ~37 %, RAM 11 GB of 62 GB.
 | `docker/` | image (`Dockerfile.glim`, `build_image.sh`), container (`run_container.sh`), workspace build (`build_ws.sh`) |
 | `tools/` | `check_time_sync.py`, `zed_hid_rebind.sh`, `setup_ptp.sh` |
 | `src/kratos_bringup/` | `kratos.launch.py` (whole stack), RViz layouts (`kratos.rviz`, `laptop.rviz`) |
-| `src/kratos_perception/` | ZED 2i + ESS + nvblox launch and config |
+| `src/kratos_perception/` | ZED 2i + NEURAL/ESS depth + nvblox launch and config |
 | `src/kratos_nav/` | Nav2 launch, params, behavior trees, `waypoint_mission.py`, tests |
 | `src/pcd2pgm/` | point cloud → OccupancyGrid; live mode on a fixed grid |
 | `src/lidar_angle_filter/` | front/back sector mask |

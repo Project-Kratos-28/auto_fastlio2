@@ -42,4 +42,37 @@ inline bool point_is_masked(
   return in_front_sector || in_back_sector;
 }
 
+// Keep only points whose elevation above the sensor's horizontal plane is within
+// [min_elevation_deg, max_elevation_deg]. Use it when the sensor is held high and
+// everything below its horizontal plane (the person carrying it) must not reach GLIM.
+// Non-finite points are left alone: the scan gate already counts them as unusable.
+inline bool point_in_elevation_range(
+  const double x, const double y, const double z,
+  const double min_elevation_deg, const double max_elevation_deg)
+{
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+    return true;
+  }
+  const double elevation_deg = std::atan2(z, std::hypot(x, y)) * 180.0 / kPi;
+  return elevation_deg >= min_elevation_deg && elevation_deg <= max_elevation_deg;
+}
+
+// GLIM aborts the whole process when a scan has no usable points left after its
+// own preprocessing (a covered or blocked LiDAR). A scan is only worth passing on
+// if enough points are finite and far enough from the sensor to survive that.
+inline bool point_is_usable(
+  const double x, const double y, const double z, const double min_range)
+{
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+    return false;
+  }
+  return x * x + y * y + z * z >= min_range * min_range;
+}
+
+inline bool scan_has_enough_points(
+  const unsigned long usable_points, const unsigned long min_usable_points)
+{
+  return usable_points >= min_usable_points;
+}
+
 }  // namespace lidar_angle_filter

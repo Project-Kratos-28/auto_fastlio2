@@ -1,8 +1,8 @@
 #!/bin/bash
-# Host: start the whole Kratos stack (MID-360, GLIM, pcd2pgm, Nav2 + nvblox, ZED 2i + ESS).
+# Host: start the whole Kratos stack (MID-360, GLIM, pcd2pgm, Nav2 + nvblox, ZED 2i depth).
 # Made for SSH from the laptop:
-#   ~/kratos_glim/start.sh                    # defaults (ESS depth)
-#   ~/kratos_glim/start.sh depth:=zed         # any kratos.launch.py argument, e.g. lidar_z:=0.62
+#   ~/kratos_glim/start.sh                    # defaults (ZED NEURAL depth)
+#   ~/kratos_glim/start.sh depth:=ess         # any kratos.launch.py argument, e.g. lidar_z:=0.62
 #   ~/kratos_glim/start.sh --no-follow ...    # start and return (don't show the log)
 #   ~/kratos_glim/logs.sh                     # show the log again
 #   ~/kratos_glim/stop.sh                     # stop it (GLIM's session goes to ~/kratos_glim/maps/)
@@ -30,8 +30,10 @@ if running; then
 fi
 
 # Preflight: sensors reachable, nobody else holding the ZED.
-LIDAR_IP=$(grep -oE '"ip" *: *"[0-9.]+"' "$REPO/src/livox_ros_driver2/config/MID360_config.json" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
-ping -c 1 -W 1 "$LIDAR_IP" >/dev/null 2>&1 || echo "WARNING: MID-360 not answering at $LIDAR_IP (the Orin's LiDAR port must be 192.168.1.50/24)"
+# The MID-360's IP differs per unit: find it once here and hand it to the launch (LIVOX_LIDAR_IP).
+HOST_IP=$(grep -oE '"cmd_data_ip" *: *"[0-9.]+"' "$REPO/src/livox_ros_driver2/config/MID360_config.json" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+LIDAR_IP=$(python3 "$REPO/src/kratos_bringup/launch/lidar_ip.py") \
+    || echo "WARNING: no MID-360 answering on 192.168.1.1xx (power, cable; the Orin's LiDAR port must be $HOST_IP/24)"
 if [[ " $ARGS " != *" depth:=none "* ]]; then
     lsusb | grep -qi '2b03:f880' || echo "WARNING: ZED 2i not found on USB 3 (depth:=none runs LiDAR only)"
     for c in $(docker ps --format '{{.Names}}' | grep -vx "$NAME"); do
@@ -56,7 +58,7 @@ mkdir -p "$REPO/log/bringup"
 LOG="log/bringup/$(date +%Y%m%d_%H%M%S).log"
 ln -sfn "$(basename "$LOG")" "$REPO/log/bringup/latest.log"
 date +%s > "$REPO/log/bringup/started_at"
-docker exec -d -u "$(id -u):$(id -g)" ${DISPLAY:+-e DISPLAY="$DISPLAY"} -w /workspaces/kratos_glim "$NAME" \
+docker exec -d -u "$(id -u):$(id -g)" ${DISPLAY:+-e DISPLAY="$DISPLAY"} ${LIDAR_IP:+-e LIVOX_LIDAR_IP="$LIDAR_IP"} -w /workspaces/kratos_glim "$NAME" \
     bash -lc "exec ros2 launch kratos_bringup kratos.launch.py $ARGS > $LOG 2>&1"
 echo "started (log: ~/kratos_glim/$LOG). Keep the rover still ~10 s for GLIM's IMU initialization."
 sleep 2

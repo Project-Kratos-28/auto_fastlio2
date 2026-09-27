@@ -3,7 +3,7 @@
 <package format="3">
   <name>kratos_bringup</name>
   <version>0.1.0</version>
-  <description>One-command bring-up of the Kratos rover stack on the Orin: MID-360 driver, angle filter, GLIM, pcd2pgm, Nav2 (+ nvblox_layer), ZED 2i depth + nvblox, RViz.</description>
+  <description>One-command bring-up of the Kratos rover stack on the Orin: MID-360 driver, angle filter, GLIM, pcd2pgm, Nav2 (+ nvblox_layer), ZED 2i depth + nvblox, RViz, optional Cloudini compression.</description>
   <maintainer email="advaithm.nair@gmail.com">Advaith</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -13,6 +13,7 @@
   <exec_depend>pcd2pgm</exec_depend>
   <exec_depend>kratos_nav</exec_depend>
   <exec_depend>kratos_perception</exec_depend>
+  <exec_depend>cloudini_ros</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>nvblox_rviz_plugin</exec_depend>
   <export>

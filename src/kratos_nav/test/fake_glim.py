@@ -18,7 +18,7 @@ produced these numbers):
     fixed_origin_x/y -25). Republished every ~10 s, like pcd2pgm re-publishing
     as GLIM's /glim_ros/map periodically grows.
   - A wall obstacle sits between the start pose and wp1's straight-line path,
-    so SmacPlannerHybrid has to route around it (see WALL_* below).
+    so SmacPlannerLattice has to route around it (see WALL_* below).
   - /get_waypoint, /list_waypoints: real field names (waypoint_interfaces),
     real global service names (no ~/ namespace - see
     waypoint_manager_module.hpp). GetWaypoint.Response.found is False both for
@@ -61,7 +61,7 @@ WALL_Y = (-2.0, 2.0)
 # Half-width used ONLY for this test's own "did the robot touch the wall"
 # check (footprint is +-0.37 m + 0.03 m padding in nav2_params.yaml, so a
 # circle of this radius approximates the robot's body around its center).
-ROBOT_COLLISION_RADIUS = 0.40
+ROBOT_COLLISION_RADIUS = 0.65
 
 
 def world_to_grid(x, y):

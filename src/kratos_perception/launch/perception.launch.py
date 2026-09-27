@@ -1,7 +1,7 @@
 """ZED 2i depth -> nvblox (in GLIM's odom frame) -> /nvblox_node/static_map_slice for Nav2.
 
-  ros2 launch kratos_perception perception.launch.py                  # ESS depth (default)
-  ros2 launch kratos_perception perception.launch.py depth:=zed       # ZED SDK NEURAL depth
+  ros2 launch kratos_perception perception.launch.py                  # ZED SDK NEURAL depth (default)
+  ros2 launch kratos_perception perception.launch.py depth:=ess       # ESS depth
   ros2 launch kratos_perception perception.launch.py lidar_z:=0.62    # MUST match nav.launch.py
 
 Needs, already running:
@@ -31,8 +31,8 @@ from launch_ros.descriptions import ComposableNode
 ESS_ROOT = '/workspaces/kratos_nvblox/ess'   # node, TensorRT engines, plugin, Python venv
 
 DEPTH = {  # depth:= option -> (ZED SDK depth mode, depth image, depth camera_info)
-    'ess': ('NONE', '/ess/depth', '/ess/camera_info'),
     'zed': ('NEURAL', '/zed/zed_node/depth/depth_registered', '/zed/zed_node/depth/camera_info'),
+    'ess': ('NONE', '/ess/depth', '/ess/camera_info'),
 }
 
 
@@ -95,7 +95,7 @@ def setup(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('depth', default_value='ess', description='ess | zed'),
+        DeclareLaunchArgument('depth', default_value='zed', description='zed (SDK NEURAL) | ess'),
         DeclareLaunchArgument('lidar_z', default_value='0.60',
                               description='MID-360 height above ground (m); MUST match nav.launch.py lidar_z'),
         OpaqueFunction(function=setup),

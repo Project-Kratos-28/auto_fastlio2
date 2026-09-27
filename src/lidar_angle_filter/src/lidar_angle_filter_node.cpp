@@ -33,6 +33,17 @@ public:
     front_center_deg_ = declare_parameter<double>("front_center_deg", 0.0);
     front_sector_deg_ = declare_parameter<double>("front_sector_deg", 30.0);
     back_sector_deg_ = declare_parameter<double>("back_sector_deg", 30.0);
+    // Scan gate: a scan with fewer than min_usable_points points at least
+    // min_usable_range metres from the sensor is dropped, not published.
+    // 0 disables the gate. Keep min_usable_range above GLIM's
+    // distance_near_thresh (0.5 m in config_preprocess.json).
+    min_usable_points_ = declare_parameter<int>("min_usable_points", 120);
+    min_usable_range_ = declare_parameter<double>("min_usable_range", 0.7);
+
+    // Vertical window in degrees above the sensor's horizontal plane. The defaults
+    // (-90..90) keep every point. See config/angle_filter.yaml before changing them.
+    min_elevation_deg_ = declare_parameter<double>("min_elevation_deg", -90.0);
+    max_elevation_deg_ = declare_parameter<double>("max_elevation_deg", 90.0);
 
     validate_parameters();
 
@@ -56,6 +67,16 @@ private:
     }
     if (!std::isfinite(front_center_deg_)) {
       throw std::invalid_argument("front_center_deg must be finite");
+    }
+    if (min_usable_points_ < 0 || !std::isfinite(min_usable_range_) || min_usable_range_ < 0.0) {
+      throw std::invalid_argument("min_usable_points and min_usable_range must be >= 0");
+    }
+    if (!std::isfinite(min_elevation_deg_) || !std::isfinite(max_elevation_deg_) ||
+      min_elevation_deg_ < -90.0 || max_elevation_deg_ > 90.0 ||
+      min_elevation_deg_ >= max_elevation_deg_)
+    {
+      throw std::invalid_argument(
+        "min_elevation_deg and max_elevation_deg must satisfy -90 <= min < max <= 90");
     }
     if (!valid_sector_width(front_sector_deg_) || !valid_sector_width(back_sector_deg_)) {
       throw std::invalid_argument("front_sector_deg and back_sector_deg must be between 0 and 180");
@@ -133,6 +154,7 @@ private:
     try {
       const CoordinateField x_field = find_coordinate_field(*cloud, "x");
       const CoordinateField y_field = find_coordinate_field(*cloud, "y");
+      const CoordinateField z_field = find_coordinate_field(*cloud, "z");
 
       auto filtered = std::make_unique<sensor_msgs::msg::PointCloud2>();
       filtered->header = cloud->header;
@@ -145,6 +167,7 @@ private:
 
       std::size_t kept_points = 0;
       std::size_t masked_points = 0;
+      unsigned long usable_points = 0;
       for (std::uint32_t row = 0; row < cloud->height; ++row) {
         const std::size_t row_offset = static_cast<std::size_t>(row) * cloud->row_step;
         for (std::uint32_t column = 0; column < cloud->width; ++column) {
@@ -156,6 +179,11 @@ private:
           const std::uint8_t * point = cloud->data.data() + offset;
           const double x = read_coordinate(point, x_field, cloud->is_bigendian);
           const double y = read_coordinate(point, y_field, cloud->is_bigendian);
+          const double z = read_coordinate(point, z_field, cloud->is_bigendian);
+          if (!point_in_elevation_range(x, y, z, min_elevation_deg_, max_elevation_deg_)) {
+            ++masked_points;
+            continue;
+          }
           if (point_is_masked(
               x, y, front_center_deg_, front_sector_deg_, back_sector_deg_))
           {
@@ -163,9 +191,23 @@ private:
             continue;
           }
 
+          if (point_is_usable(x, y, z, min_usable_range_)) {
+            ++usable_points;
+          }
+
           filtered->data.insert(filtered->data.end(), point, point + cloud->point_step);
           ++kept_points;
         }
+      }
+
+      if (!scan_has_enough_points(usable_points, static_cast<unsigned long>(min_usable_points_))) {
+        ++dropped_scans_;
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "Dropping scan: only %lu points beyond %.2f m (need %d). LiDAR covered or blocked? "
+          "%lu scans dropped so far. GLIM is not sent this scan.",
+          usable_points, min_usable_range_, min_usable_points_, dropped_scans_);
+        return;
       }
 
       filtered->width = static_cast<std::uint32_t>(kept_points);
@@ -185,6 +227,11 @@ private:
   double front_center_deg_;
   double front_sector_deg_;
   double back_sector_deg_;
+  int min_usable_points_;
+  double min_usable_range_;
+  double min_elevation_deg_;
+  double max_elevation_deg_;
+  unsigned long dropped_scans_ = 0;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
 };

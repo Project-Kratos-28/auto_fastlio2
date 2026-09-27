@@ -6,7 +6,7 @@ Nav2's `/cmd_vel`; whatever drives the wheels subscribes to it and is not part o
 (The repo name `auto_fastlio2` is historical; FAST-LIO is not used.)
 
 Pipeline: Livox MID-360 → GLIM (SLAM, waypoints) → pcd2pgm `/map` → Nav2 → `/cmd_vel`, plus
-ZED 2i → ESS depth → nvblox → Nav2 local costmap. Everything runs in one Docker container
+ZED 2i → ZED NEURAL (or ESS) depth → nvblox → Nav2 local costmap. Everything runs in one Docker container
 (`kratos_glim`), started by `start.sh`.
 
 ## Hardware and network
@@ -17,8 +17,10 @@ ZED 2i → ESS depth → nvblox → Nav2 local costmap. Everything runs in one D
 | ZED 2i | USB 3 | needs the udev rule below |
 | Laptop | Ubiquiti link | same `ROS_DOMAIN_ID`; see [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md#laptop--remote-gui) |
 
-The LiDAR's IP is in `src/livox_ros_driver2/config/MID360_config.json` (`lidar_configs[0].ip`).
 A MID-360's factory address is `192.168.1.1XX`, XX = the last two digits of its serial number.
+`start.sh` finds the unit that answers (`src/kratos_bringup/launch/lidar_ip.py`, ARP on `.100`–`.199`);
+`LIVOX_LIDAR_IP=192.168.1.xxx ./start.sh` forces one. If none answers, `lidar_configs[0].ip` in
+`src/livox_ros_driver2/config/MID360_config.json` is used.
 The driver tells the LiDAR where to send data (`host_net_info`, `192.168.1.50`) at startup.
 
 ## Setup (once)
@@ -35,20 +37,21 @@ sudo cp ~/kratos_nvblox/docker/99-slabs.rules /etc/udev/rules.d/ && sudo udevadm
 ~/kratos_glim/docker/run_container.sh docker/build_ws.sh
 ```
 
-`docker/Dockerfile.glim` adds GLIM 1.2.2 (CPU, koide3 PPA), Livox-SDK2, Nav2 and the patched
+`docker/Dockerfile.glim` adds GLIM 1.2.2 (CPU, koide3 PPA), Livox-SDK2, Nav2, Cloudini and the patched
 `glim_ros` overlay ([`glim/glim_ros_fix`](glim/glim_ros_fix/README.md)) to the kratos image.
-ESS (TensorRT engines, node, Python venv) comes from `~/kratos_nvblox/ess`, mounted into the
+ESS (`depth:=ess`: TensorRT engines, node, Python venv) comes from `~/kratos_nvblox/ess`, mounted into the
 container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/zed`.
 
 ## Run
 
 ```bash
-~/kratos_glim/start.sh                      # everything, ESS depth
-~/kratos_glim/start.sh depth:=zed           # ZED SDK NEURAL depth instead of ESS
+~/kratos_glim/start.sh                      # everything, ZED SDK NEURAL depth
+~/kratos_glim/start.sh depth:=ess           # ESS depth instead of ZED NEURAL
 ~/kratos_glim/start.sh depth:=none          # LiDAR only (no camera, no nvblox)
+~/kratos_glim/start.sh cloudini:=true       # + compressed point clouds for the laptop
 ~/kratos_glim/start.sh lidar_z:=0.62 cam_x:=0.35 cam_z:=0.45 cam_pitch:=0.30
 ~/kratos_glim/start.sh --no-follow ...      # start and return to the prompt
-~/kratos_glim/logs.sh                       # follow the log again; logs.sh 'glim|ess' filters
+~/kratos_glim/logs.sh                       # follow the log again; logs.sh 'glim|zed' filters
 ~/kratos_glim/stop.sh                       # stop; files GLIM's session; frees the ZED and GPU
 ```
 
@@ -72,8 +75,10 @@ container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `depth` | `ess` | `ess`, `zed` (SDK NEURAL) or `none` |
+| `depth` | `zed` | `zed` (SDK NEURAL), `ess` or `none` |
 | `gui` | `auto` | `auto`: RViz + GLIM viewer only with a local display |
+| `cloudini` | `false` | `true`: also publish `/glim_ros/points/compressed` and `/glim_ros/map/compressed` (Cloudini, `cloudini_resolution`, default 0.01 m), see [`docs/CLOUDINI.md`](docs/CLOUDINI.md) |
+| `cloudini_resolution` | `0.01` | position resolution of the compressed clouds (m) |
 | `lidar_z` | `0.60` | MID-360 height above ground (m). **Placeholder** |
 | `lidar_x` | `0.0` | MID-360 forward of `base_link` (m) |
 | `cam_x`, `cam_y`, `cam_z` | `0.30`, `0.0`, `0.45` | ZED (`zed_camera_link`) position from `base_link` (m). **Placeholder** |
@@ -87,6 +92,7 @@ container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/
 |---|---|
 | [`docs/FIELD_TEST.md`](docs/FIELD_TEST.md) | test-day runbook: checks and troubleshooting |
 | [`docs/MISSIONS.md`](docs/MISSIONS.md) | tagging waypoints, running missions, saved GLIM sessions |
+| [`docs/CLOUDINI.md`](docs/CLOUDINI.md) | compressed point clouds for the laptop GUI: encoder, contract with the decoder, limits |
 | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | `lidar_z`, camera mount, Nav2/GLIM/nvblox settings, laptop networking, clocks |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | data flow, what starts, measured performance, known limits, repo layout |
 | [`docs/TESTING.md`](docs/TESTING.md) | hardware-free tests |
