@@ -13,7 +13,8 @@ waypoint_mission.py ─► Nav2 navigate_to_pose / navigate_through_poses ─►
 ```
 
 - **GLIM** is the SLAM: pose (`map → odom → base_link`) and a 3D map, from the MID-360's points
-  and IMU. It runs on the CPU; the GPU is kept for depth and nvblox.
+  and IMU. Docker uses CPU odometry; a bare metal CUDA build can use GPU odometry with
+  `glim_gpu:=true`.
 - **pcd2pgm** turns GLIM's 3D map into a 2D `/map` (fixed 50×50 m grid, 5 cm) for the global costmap.
 - **nvblox** covers what the LiDAR can't see: the MID-360's field of view is −7° to +52°, so at
   0.60 m height its lowest beam reaches the ground ~4.9 m out, and anything shorter than

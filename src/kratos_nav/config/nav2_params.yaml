@@ -161,7 +161,7 @@ local_costmap:
           data_type: "PointCloud2"
           marking: true
           clearing: true
-          min_obstacle_height: 0.0   # ground + 0.2 m (see HEIGHT NUMBERS)
+          min_obstacle_height: -0.40  # ground + 0.2 m (see HEIGHT NUMBERS)
           max_obstacle_height: 1.20    # ground + 1.8 m
           obstacle_min_range: 0.5
           obstacle_max_range: 5.0
@@ -173,7 +173,7 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         # > circumscribed radius (~0.96 m incl. padding) so Smac keeps clear of obstacles;
         # low scaling factor = cost falls off slowly = wide berth.
-        inflation_radius: 0.5
+        inflation_radius: 1.0
         cost_scaling_factor: 1.0
 
       always_send_full_costmap: true
@@ -216,7 +216,7 @@ global_costmap:
           data_type: "PointCloud2"
           marking: true
           clearing: true
-          min_obstacle_height: 0.0
+          min_obstacle_height: -0.40
           max_obstacle_height: 1.20
           obstacle_min_range: 0.5
           obstacle_max_range: 5.0
@@ -239,7 +239,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         # > circumscribed radius (~0.96 m incl. padding) so Smac keeps clear of obstacles;
         # low scaling factor = cost falls off slowly = wide berth.
-        inflation_radius: 0.5
+        inflation_radius: 1.0
         cost_scaling_factor: 1.0
 
       always_send_full_costmap: true
