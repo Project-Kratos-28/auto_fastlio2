@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host: start the whole Kratos stack (MID-360, GLIM, pcd2pgm, Nav2 + nvblox, ZED 2i depth).
+# Host: start the whole Kratos stack in Docker (default) or on bare metal.
 # Made for SSH from the laptop:
 #   ~/kratos_glim/start.sh                    # defaults (ZED NEURAL depth)
 #   ~/kratos_glim/start.sh depth:=ess         # any kratos.launch.py argument, e.g. lidar_z:=0.62
@@ -14,10 +14,44 @@
 # KEEP THE ROVER STILL for the first ~10 s (GLIM estimates the IMU state at start).
 set -e
 REPO=$(cd "$(dirname "$0")" && pwd)
-NAME=kratos_glim
+MODE=docker
 FOLLOW=1
-if [ "${1:-}" = "--no-follow" ]; then FOLLOW=0; shift; fi
-ARGS="$*"
+LAUNCH_ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --docker) MODE=docker ;;
+        --bare-metal) MODE=bare-metal ;;
+        --no-follow) FOLLOW=0 ;;
+        -h|--help)
+            cat <<'HELP'
+Usage: ./start.sh [--docker | --bare-metal] [--no-follow] [ROS launch arguments]
+
+Docker is the default. Bare metal runs in the foreground and stops with Ctrl+C;
+build it first with ./build_bare.sh. --no-follow applies only to Docker.
+Examples: ./start.sh --bare-metal depth:=none
+          ./start.sh --docker depth:=ess cloudini:=true
+HELP
+            exit 0 ;;
+        *) LAUNCH_ARGS+=("$arg") ;;
+    esac
+done
+if [ "$MODE" = bare-metal ]; then
+    [ "$FOLLOW" = 1 ] || { echo '--no-follow is only supported in Docker mode.' >&2; exit 2; }
+    exec "$REPO/bringup.sh" "${LAUNCH_ARGS[@]}"
+fi
+mkdir -p "$REPO/.home"
+flock -n "$REPO/.home/bare.lock" true || {
+    echo 'The bare-metal stack is running. Stop it with Ctrl+C before starting Docker.' >&2
+    exit 1
+}
+NAME=kratos_glim
+ARGS_Q=''
+DEPTH=zed
+for arg in "${LAUNCH_ARGS[@]}"; do
+    printf -v quoted '%q' "$arg"
+    ARGS_Q+=" $quoted"
+    case "$arg" in depth:=*) DEPTH=${arg#depth:=} ;; esac
+done
 
 running() {
     docker ps --format '{{.Names}}' | grep -qx "$NAME" \
@@ -34,7 +68,7 @@ fi
 HOST_IP=$(grep -oE '"cmd_data_ip" *: *"[0-9.]+"' "$REPO/src/livox_ros_driver2/config/MID360_config.json" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
 LIDAR_IP=$(python3 "$REPO/src/kratos_bringup/launch/lidar_ip.py") \
     || echo "WARNING: no MID-360 answering on 192.168.1.1xx (power, cable; the Orin's LiDAR port must be $HOST_IP/24)"
-if [[ " $ARGS " != *" depth:=none "* ]]; then
+if [ "$DEPTH" != none ]; then
     lsusb | grep -qi '2b03:f880' || echo "WARNING: ZED 2i not found on USB 3 (depth:=none runs LiDAR only)"
     for c in $(docker ps --format '{{.Names}}' | grep -vx "$NAME"); do
         if docker top "$c" -eo args 2>/dev/null | grep -qE 'zed_wrapper|zed_node|component_container.*zed'; then
@@ -59,7 +93,7 @@ LOG="log/bringup/$(date +%Y%m%d_%H%M%S).log"
 ln -sfn "$(basename "$LOG")" "$REPO/log/bringup/latest.log"
 date +%s > "$REPO/log/bringup/started_at"
 docker exec -d -u "$(id -u):$(id -g)" ${DISPLAY:+-e DISPLAY="$DISPLAY"} ${LIDAR_IP:+-e LIVOX_LIDAR_IP="$LIDAR_IP"} -w /workspaces/kratos_glim "$NAME" \
-    bash -lc "exec ros2 launch kratos_bringup kratos.launch.py $ARGS > $LOG 2>&1"
+    bash -lc "exec ros2 launch kratos_bringup kratos.launch.py${ARGS_Q} > $LOG 2>&1"
 echo "started (log: ~/kratos_glim/$LOG). Keep the rover still ~10 s for GLIM's IMU initialization."
 sleep 2
 running || { echo "ERROR: the launch exited right away:"; tail -20 "$REPO/$LOG"; exit 1; }

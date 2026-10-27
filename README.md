@@ -6,8 +6,8 @@ Nav2's `/cmd_vel`; whatever drives the wheels subscribes to it and is not part o
 (The repo name `auto_fastlio2` is historical; FAST-LIO is not used.)
 
 Pipeline: Livox MID-360 → GLIM (SLAM, waypoints) → pcd2pgm `/map` → Nav2 → `/cmd_vel`, plus
-ZED 2i → ZED NEURAL (or ESS) depth → nvblox → Nav2 local costmap. Everything runs in one Docker container
-(`kratos_glim`), started by `start.sh`.
+ZED 2i → ZED NEURAL (or ESS) depth → nvblox → Nav2 local costmap. `start.sh` runs the same
+ROS launch in Docker by default or directly on a Jazzy host with `--bare-metal`.
 
 ## Hardware and network
 
@@ -45,7 +45,10 @@ container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/
 ## Run
 
 ```bash
-~/kratos_glim/start.sh                      # everything, ZED SDK NEURAL depth
+~/kratos_glim/start.sh                      # Docker (default), ZED SDK NEURAL depth
+~/kratos_glim/start.sh --docker depth:=none # explicit Docker mode
+~/kratos_glim/start.sh --bare-metal depth:=none  # host Jazzy, LiDAR only
+~/kratos_glim/start.sh --bare-metal depth:=zed cloudini:=true
 ~/kratos_glim/start.sh depth:=ess           # ESS depth instead of ZED NEURAL
 ~/kratos_glim/start.sh depth:=none          # LiDAR only (no camera, no nvblox)
 ~/kratos_glim/start.sh cloudini:=true       # + compressed point clouds for the laptop
@@ -55,10 +58,25 @@ container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/
 ~/kratos_glim/stop.sh                       # stop; files GLIM's session; frees the ZED and GPU
 ```
 
+For bare metal, install ROS 2 Jazzy, GLIM 1.2.2 with this repo's patched `glim_ros`
+overlay, Livox-SDK2, and Nav2 on the host, then run `./build_bare.sh`. The patched
+overlay defaults to `/opt/glim_ros_fix_ws/install/local_setup.bash`; set
+`KRATOS_GLIM_OVERLAY` if it is elsewhere. Camera modes also require the ZED SDK,
+`zed_wrapper`, `nvblox_ros`, and `nvblox_examples_bringup` on the host. Nav2 also
+needs `nvblox_nav2` even with `depth:=none` because its local costmap loads that plugin. `depth:=ess`
+needs the ESS runtime at sibling `kratos_nvblox/ess` or `KRATOS_ESS_ROOT`;
+`cloudini:=true` needs `cloudini_ros`. The bare launcher checks these packages.
+Its build uses `build_bare/` and `install_bare/`, separate from Docker's path-dependent
+symlink install.
+
+Bare metal runs in the foreground. Ctrl+C stops the launch and lets GLIM save to
+`/tmp/dump`; ROS logs are under `log/bringup/bare_*`. `--no-follow`, `logs.sh`, and
+`stop.sh` apply to Docker mode. Run only one mode at a time.
+
 **Keep the rover still for the first ~10 s**: GLIM estimates the IMU state at start
 (`initial IMU state estimation result` in the log). Moving then gives wrong IMU bias and orientation.
 
-- The stack runs **detached** in the container. Ctrl+C in `start.sh`/`logs.sh`, closing the
+- The Docker stack runs **detached** in the container. Ctrl+C in `start.sh`/`logs.sh`, closing the
   terminal or losing SSH only stops showing the log. Only `stop.sh` stops the stack.
 - `start.sh` checks the LiDAR answers, and (unless `depth:=none`) that the ZED is plugged in and
   no other container runs it (only one process can open the camera). It also re-binds the ZED's

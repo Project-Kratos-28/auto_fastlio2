@@ -23,7 +23,9 @@ waypoint_mission.py ─► Nav2 navigate_to_pose / navigate_through_poses ─►
 - **waypoint_manager** (a GLIM extension) tags waypoints relative to GLIM submaps, so they move
   with loop-closure corrections. **waypoint_mission.py** drives to them through Nav2.
 
-Everything runs in one Docker container (`kratos_glim`), started by `start.sh`.
+The same `kratos.launch.py` runs in the `kratos_glim` Docker container by default, or on a
+ROS 2 Jazzy host with `start.sh --bare-metal`. The host and Docker builds have separate
+install directories; see `README.md` for setup and stop behavior.
 
 ## What starts
 

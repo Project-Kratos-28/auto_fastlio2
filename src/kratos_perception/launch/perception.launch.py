@@ -28,7 +28,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
-ESS_ROOT = '/workspaces/kratos_nvblox/ess'   # node, TensorRT engines, plugin, Python venv
+ESS_ROOT = os.environ.get('KRATOS_ESS_ROOT', '/workspaces/kratos_nvblox/ess')
 
 DEPTH = {  # depth:= option -> (ZED SDK depth mode, depth image, depth camera_info)
     'zed': ('NEURAL', '/zed/zed_node/depth/depth_registered', '/zed/zed_node/depth/camera_info'),

@@ -1,4 +1,4 @@
-"""Whole Kratos rover stack in one command (run inside the kratos_glim container).
+"""Whole Kratos rover stack in one command (Docker or host ROS 2 Jazzy).
 
   ros2 launch kratos_bringup kratos.launch.py                      # everything, ZED NEURAL depth, RViz
   ros2 launch kratos_bringup kratos.launch.py depth:=ess           # ESS depth instead of ZED NEURAL
@@ -50,7 +50,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import lidar_ip  # noqa: E402  (sibling module)
 
-WS = '/workspaces/kratos_glim'
+WS = os.environ.get('KRATOS_WORKSPACE', '/workspaces/kratos_glim')
 
 
 def share(pkg, *path):

@@ -1,6 +1,6 @@
 # glim_ros 1.2.2 `/glim_ros/map` fix (overlay)
 
-**Why it's needed:** the apt package `ros-humble-glim-ros` 1.2.2 has a bug in
+**Why it's needed:** the apt package `ros-jazzy-glim-ros` 1.2.2 has a bug in
 `rviz_viewer` that corrupts `/glim_ros/map` during a normal run.
 
 1. The pose graph re-optimizes on an idle timer, and every time it fires
@@ -29,12 +29,14 @@ git clone --branch v1.2.2 https://github.com/koide3/glim_ros2.git
 cd glim_ros2
 git apply /path/to/auto_fastlio2/glim/glim_ros_fix/rviz_viewer_submap_guard.patch
 cd ~/glim_ros_fix_ws
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 colcon build --packages-select glim_ros --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
 It builds against the apt GLIM (`libglim` headers from the koide3 PPA, the same
-ones `ros-humble-glim-ros` uses). Only `glim_ros` is rebuilt.
+ones `ros-jazzy-glim-ros` uses). Only `glim_ros` is rebuilt. For bare metal,
+set `KRATOS_GLIM_OVERLAY=$HOME/glim_ros_fix_ws/install/local_setup.bash` before
+running `build_bare.sh` and `start.sh --bare-metal`.
 
 On the team VM this already exists at `~/Kratos/glim_ros_fix_ws`, as a git
 worktree of `~/Kratos/glim_ros2` at `v1.2.2` (`fc72f46`) with the patch applied.
@@ -45,10 +47,10 @@ Source the overlay **last**, after ROS and this workspace, in the terminal that
 starts GLIM:
 
 ```bash
-source /opt/ros/humble/setup.bash
-source /path/to/auto_fastlio2/install/setup.bash       # waypoint_manager
+source /opt/ros/jazzy/setup.bash
+source /path/to/auto_fastlio2/install_bare/setup.bash  # waypoint_manager
 source ~/glim_ros_fix_ws/install/local_setup.bash     # MUST be last
-ros2 pkg prefix glim_ros    # must print .../glim_ros_fix_ws/install/glim_ros, NOT /opt/ros/humble
+ros2 pkg prefix glim_ros    # must print .../glim_ros_fix_ws/install/glim_ros, NOT /opt/ros/jazzy
 ros2 run glim_ros glim_rosnode --ros-args -p config_path:=$(realpath /path/to/auto_fastlio2/glim/glim_config)
 ```
 

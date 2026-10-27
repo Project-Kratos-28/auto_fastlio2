@@ -4,6 +4,9 @@
 build/
 install/
 log/
+build_bare/
+install_bare/
+log_bare/
 .colcon/
 COLCON_IGNORE
 .built_by

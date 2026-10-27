@@ -6,18 +6,20 @@ Guidance for AI coding agents and new teammates. Read [`README.md`](README.md) f
 ## What this branch is
 
 `jazzy-nvblox`: the Kratos rover autonomy stack on a Jetson AGX Orin (JetPack 7.2, Ubuntu 24.04,
-ROS 2 Jazzy), all in one Docker container (`kratos_glim`, built from `docker/`):
+ROS 2 Jazzy), in Docker by default (`kratos_glim`, built from `docker/`) or on the host with
+`start.sh --bare-metal` and a separate `build_bare.sh` build:
 Livox MID-360 → GLIM (SLAM + `waypoint_manager`) → pcd2pgm `/map` → Nav2 → `/cmd_vel`, plus
 ZED 2i → ESS/ZED depth → nvblox → Nav2 local costmap. `start.sh` runs everything
-(`src/kratos_bringup/launch/kratos.launch.py`).
+(`src/kratos_bringup/launch/kratos.launch.py`) in both modes.
 
 **Scope ends at `/cmd_vel`.** Whatever drives the wheels is outside this repo; don't add or
 discuss anything downstream of it.
 
 ## Build and test
 
-Everything runs in the container (`docker/run_container.sh <cmd>`, working directory
-`/workspaces/kratos_glim`):
+The Docker build and tests run in the container (`docker/run_container.sh <cmd>`, working directory
+`/workspaces/kratos_glim`). For bare metal, build with `./build_bare.sh` and launch with
+`./start.sh --bare-metal`:
 
 ```bash
 docker/run_container.sh docker/build_ws.sh
