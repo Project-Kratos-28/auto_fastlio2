@@ -13,7 +13,7 @@ ROS launch in Docker by default or directly on a Jazzy host with `--bare-metal`.
 
 | Device | Connection | Address / notes |
 |---|---|---|
-| Livox MID-360 | Orin Ethernet `end0` (100 Mbit/s link, ~24 Mbit/s used) | LiDAR `192.168.1.162`, Orin `192.168.1.50/24` |
+| Livox MID-360 | Orin Ethernet `end0`, via the network switch | LiDAR `192.168.1.162`, Orin `192.168.1.10/24` |
 | ZED 2i | USB 3 | needs the udev rule below |
 | Laptop | Ubiquiti link | same `ROS_DOMAIN_ID`; see [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md#laptop--remote-gui) |
 
@@ -21,9 +21,9 @@ A MID-360's factory address is `192.168.1.1XX`, XX = the last two digits of its 
 `start.sh` finds the unit that answers (`src/kratos_bringup/launch/lidar_ip.py`, ARP on `.100`–`.199`);
 `LIVOX_LIDAR_IP=192.168.1.xxx ./start.sh` forces one. If none answers, `lidar_configs[0].ip` in
 `src/livox_ros_driver2/config/MID360_config.json` is used.
-The driver tells the LiDAR where to send data (`host_net_info`, `192.168.1.50`) at startup.
+The driver tells the LiDAR where to send data (`host_net_info`, `192.168.1.10`) at startup.
 
-## Setup (once)
+## Docker setup (once, if using Docker)
 
 ```bash
 # 1. ZED udev rule (host): lets the SDK reach the camera's sensors
@@ -31,10 +31,10 @@ sudo cp ~/kratos_nvblox/docker/99-slabs.rules /etc/udev/rules.d/ && sudo udevadm
 
 # 2. Images: the kratos nvblox image (Isaac ROS 4.6, nvblox, Nav2, ZED SDK 5.4.1), then this one on top
 ~/kratos_nvblox/docker/build_image.sh
-~/kratos_glim/docker/build_image.sh
+./docker/build_image.sh
 
 # 3. Build the workspace (in the container; start.sh also does this if it was never built)
-~/kratos_glim/docker/run_container.sh docker/build_ws.sh
+./docker/run_container.sh docker/build_ws.sh
 ```
 
 `docker/Dockerfile.glim` adds GLIM 1.2.2 (CPU, koide3 PPA), Livox-SDK2, Nav2, Cloudini and the patched
@@ -44,19 +44,21 @@ container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/
 
 ## Run
 
+From the repository checkout (`cd ~/ros2_ws/src/auto_fastlio2` on the Orin):
+
 ```bash
-~/kratos_glim/start.sh                      # Docker (default), ZED SDK NEURAL depth
-~/kratos_glim/start.sh --docker depth:=none # explicit Docker mode
-~/kratos_glim/start.sh --bare-metal depth:=none  # host Jazzy, LiDAR only
-~/kratos_glim/start.sh --bare-metal depth:=none glim_gpu:=true  # CUDA GLIM odometry
-~/kratos_glim/start.sh --bare-metal depth:=zed cloudini:=true
-~/kratos_glim/start.sh depth:=ess           # ESS depth instead of ZED NEURAL
-~/kratos_glim/start.sh depth:=none          # LiDAR only (no camera, no nvblox)
-~/kratos_glim/start.sh cloudini:=true       # + compressed point clouds for the laptop
-~/kratos_glim/start.sh lidar_z:=0.62 cam_x:=0.35 cam_z:=0.45 cam_pitch:=0.30
-~/kratos_glim/start.sh --no-follow ...      # start and return to the prompt
-~/kratos_glim/logs.sh                       # follow the log again; logs.sh 'glim|zed' filters
-~/kratos_glim/stop.sh                       # stop; files GLIM's session; frees the ZED and GPU
+./start.sh                      # Docker (default), ZED SDK NEURAL depth
+./start.sh --docker depth:=none # explicit Docker mode
+./start.sh --bare-metal depth:=none  # host Jazzy, LiDAR only
+./start.sh --bare-metal depth:=none glim_gpu:=true  # CUDA GLIM odometry
+./start.sh --bare-metal depth:=zed cloudini:=true
+./start.sh depth:=ess           # ESS depth instead of ZED NEURAL
+./start.sh depth:=none          # LiDAR only (no camera, no nvblox)
+./start.sh cloudini:=true       # + compressed point clouds for the laptop
+./start.sh lidar_z:=0.62 cam_x:=0.35 cam_z:=0.45 cam_pitch:=0.30
+./start.sh --no-follow ...      # start and return to the prompt
+./logs.sh                       # follow the log again; logs.sh 'glim|zed' filters
+./stop.sh                       # stop; files GLIM's session; frees the ZED and GPU
 ```
 
 For bare metal, install ROS 2 Jazzy, GLIM 1.2.2 with this repo's patched `glim_ros`

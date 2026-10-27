@@ -13,7 +13,7 @@ Test-day procedure on the rover's Orin. Setup: [`README.md`](../README.md); sett
       turning centre; `cam_pitch` down-tilt in rad) and pass them to `start.sh`.
 - [ ] **Footprint** (measured 1.3 × 1.2 m, base_link at the centre): check nothing sticks out past it (arm, mast, antennas); `footprint` in `nav2_params.yaml`, both costmaps.
 - [ ] **Map grid** covers the arena: `fixed_*` in `pcd2pgm_live.yaml` (default 50×50 m around the start).
-- [ ] **Network**: `end0` is `192.168.1.50/24`, `ping 192.168.1.162` answers; laptop on the same
+- [ ] **Network**: `end0` is `192.168.1.10/24`, `ping 192.168.1.162` answers; laptop on the same
       `ROS_DOMAIN_ID` (`ros_network.env`).
 - [ ] Workspace built after any change to a new file (`docker/run_container.sh docker/build_ws.sh`;
       edits to existing `.py`/`.yaml`/`.xml` need no rebuild, it is a symlink install).
@@ -112,7 +112,7 @@ Real autonomy is the same mission with the wheels listening to `/cmd_vel`.
 | Symptom | Cause → fix |
 |---|---|
 | `start.sh`: `ERROR: container ... is running the ZED` | Another stack holds the camera. Stop it, or `depth:=none` |
-| `start.sh`: `no MID-360 answering` | `end0` address / cable. `ip -br addr show end0` must list `192.168.1.50/24` |
+| `start.sh`: `no MID-360 answering` | `end0` address / cable. `ip -br addr show end0` must list `192.168.1.10/24` |
 | No `/livox/lidar` | Wrong LiDAR picked (launch log: `MID-360 at ...`): force it with `LIVOX_LIDAR_IP=192.168.1.1XX ./start.sh`, XX = last two digits of its serial |
 | GLIM log goes quiet, angle filter warns `Dropping scan` | LiDAR covered or blocked (< 120 points beyond 0.7 m): scans are held back so GLIM doesn't abort; uncover it |
 | GLIM log: `Failed to lookup transform ... livox_frame ... base_link` | Static TF missing: `nav.launch.py` not up |
