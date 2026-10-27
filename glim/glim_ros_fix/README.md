@@ -1,5 +1,28 @@
 # glim_ros 1.2.2 `/glim_ros/map` fix (overlay)
 
+## GLIM core guard for sensor gaps
+
+On the Orin, a rare LiDAR/IMU gap left only one frame in GLIM's sliding window.
+GLIM 1.2.2 then indexed the already marginalized previous frame and aborted with
+`IndexedSlidingWindow: index out of range`. The patch
+[`odometry_missing_imu_guard.patch`](odometry_missing_imu_guard.patch) keeps the
+last pose when no previous frame or sufficient IMU data is available.
+
+Build this separate overlay before the rover workspace (use `-DBUILD_WITH_CUDA=ON`
+for a CUDA GLIM installation):
+
+```bash
+mkdir -p /opt/glim_core_fix_ws/src
+git clone --branch v1.2.2 https://github.com/koide3/glim.git /opt/glim_core_fix_ws/src/glim
+git -C /opt/glim_core_fix_ws/src/glim apply /path/to/auto_fastlio2/glim/glim_ros_fix/odometry_missing_imu_guard.patch
+cd /opt/glim_core_fix_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select glim --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_CUDA=ON
+```
+
+`build_bare.sh` and `bringup.sh` source this overlay before the patched
+`glim_ros` overlay when it exists. Keep both overlays after the bare workspace.
+
 **Why it's needed:** the apt package `ros-jazzy-glim-ros` 1.2.2 has a bug in
 `rviz_viewer` that corrupts `/glim_ros/map` during a normal run.
 

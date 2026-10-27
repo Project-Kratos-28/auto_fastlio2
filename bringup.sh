@@ -30,6 +30,12 @@ GLIM_OVERLAY=${KRATOS_GLIM_OVERLAY:-/opt/glim_ros_fix_ws/install/local_setup.bas
 
 source /opt/ros/jazzy/setup.bash
 source "$BARE_INSTALL/setup.bash"
+GLIM_CORE_OVERLAY=${KRATOS_GLIM_CORE_OVERLAY:-/opt/glim_core_fix_ws/install/local_setup.bash}
+if [[ -f $GLIM_CORE_OVERLAY ]]; then
+    source "$GLIM_CORE_OVERLAY"
+else
+    echo "WARNING: patched GLIM core overlay missing: $GLIM_CORE_OVERLAY (sensor gaps can abort GLIM)." >&2
+fi
 source "$GLIM_OVERLAY"
 set -a
 source "$REPO/ros_network.env"

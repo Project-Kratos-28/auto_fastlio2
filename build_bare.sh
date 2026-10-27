@@ -6,6 +6,8 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GLIM_OVERLAY=${KRATOS_GLIM_OVERLAY:-/opt/glim_ros_fix_ws/install/local_setup.bash}
 [[ -f $GLIM_OVERLAY ]] || { echo "Patched GLIM overlay missing: $GLIM_OVERLAY" >&2; exit 1; }
 source /opt/ros/jazzy/setup.bash
+GLIM_CORE_OVERLAY=${KRATOS_GLIM_CORE_OVERLAY:-/opt/glim_core_fix_ws/install/local_setup.bash}
+[[ ! -f $GLIM_CORE_OVERLAY ]] || source "$GLIM_CORE_OVERLAY"
 source "$GLIM_OVERLAY"
 cd "$REPO"
 colcon --log-base log_bare build \

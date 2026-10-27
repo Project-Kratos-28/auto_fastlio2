@@ -73,6 +73,10 @@ needs the ESS runtime at sibling `kratos_nvblox/ess` or `KRATOS_ESS_ROOT`;
 `cloudini:=true` needs `cloudini_ros`. The bare launcher checks these packages.
 Its build uses `build_bare/` and `install_bare/`, separate from Docker's path-dependent
 symlink install.
+For long-running sessions, also build the GLIM core overlay described in
+[`glim/glim_ros_fix/README.md`](glim/glim_ros_fix/README.md): it guards against an
+out-of-range frame lookup after a LiDAR/IMU gap. Bare metal sources it from
+`/opt/glim_core_fix_ws/install/local_setup.bash` when present.
 
 Bare metal runs in the foreground. Ctrl+C stops the launch and lets GLIM save to
 `/tmp/dump`; ROS logs are under `log/bringup/bare_*`. `--no-follow`, `logs.sh`, and
