@@ -48,6 +48,7 @@ container; the ZED SDK's optimized models and calibration from `~/kratos_nvblox/
 ~/kratos_glim/start.sh                      # Docker (default), ZED SDK NEURAL depth
 ~/kratos_glim/start.sh --docker depth:=none # explicit Docker mode
 ~/kratos_glim/start.sh --bare-metal depth:=none  # host Jazzy, LiDAR only
+~/kratos_glim/start.sh --bare-metal depth:=none glim_gpu:=true  # CUDA GLIM odometry
 ~/kratos_glim/start.sh --bare-metal depth:=zed cloudini:=true
 ~/kratos_glim/start.sh depth:=ess           # ESS depth instead of ZED NEURAL
 ~/kratos_glim/start.sh depth:=none          # LiDAR only (no camera, no nvblox)
@@ -62,8 +63,10 @@ For bare metal, install ROS 2 Jazzy, GLIM 1.2.2 with this repo's patched `glim_r
 overlay, Livox-SDK2, and Nav2 on the host, then run `./build_bare.sh`. The patched
 overlay defaults to `/opt/glim_ros_fix_ws/install/local_setup.bash`; set
 `KRATOS_GLIM_OVERLAY` if it is elsewhere. Camera modes also require the ZED SDK,
-`zed_wrapper`, `nvblox_ros`, and `nvblox_examples_bringup` on the host. Nav2 also
-needs `nvblox_nav2` even with `depth:=none` because its local costmap loads that plugin. `depth:=ess`
+`zed_wrapper`, `nvblox_ros`, `nvblox_nav2`, and `nvblox_examples_bringup` on the host.
+With `depth:=none`, the camera costmap layer is omitted. For `glim_gpu:=true`, install
+a CUDA-enabled GLIM build and build the patched `glim_ros` overlay with
+`-DBUILD_WITH_CUDA=ON`; the default GLIM configuration uses CPU odometry. `depth:=ess`
 needs the ESS runtime at sibling `kratos_nvblox/ess` or `KRATOS_ESS_ROOT`;
 `cloudini:=true` needs `cloudini_ros`. The bare launcher checks these packages.
 Its build uses `build_bare/` and `install_bare/`, separate from Docker's path-dependent
@@ -97,6 +100,7 @@ Bare metal runs in the foreground. Ctrl+C stops the launch and lets GLIM save to
 | `gui` | `auto` | `auto`: RViz + GLIM viewer only with a local display |
 | `cloudini` | `false` | `true`: also publish `/glim_ros/points/compressed` and `/glim_ros/map/compressed` (Cloudini, `cloudini_resolution`, default 0.01 m), see [`docs/CLOUDINI.md`](docs/CLOUDINI.md) |
 | `cloudini_resolution` | `0.01` | position resolution of the compressed clouds (m) |
+| `glim_gpu` | `false` | `true`: CUDA odometry with a GPU-enabled GLIM installation |
 | `lidar_z` | `0.60` | MID-360 height above ground (m). **Placeholder** |
 | `lidar_x` | `0.0` | MID-360 forward of `base_link` (m) |
 | `cam_x`, `cam_y`, `cam_z` | `0.30`, `0.0`, `0.45` | ZED (`zed_camera_link`) position from `base_link` (m). **Placeholder** |

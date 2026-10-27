@@ -66,6 +66,11 @@ docker/run_container.sh 'PCD2PGM_SETUP=$PWD/install/setup.bash bash src/pcd2pgm/
   `nav2_params.yaml`, and the trees must not use Spin or BackUp (the rover must never reverse; pivots are
   slow: only RotationShim's one pivot per goal; RPP itself must not pivot). `lattice_filepath` is filled in by `nav.launch.py`, and
   `config/lattice/output.json` must match the costmap resolution (0.05).
+- **LiDAR-only (`depth:=none`):** `kratos.launch.py` passes `use_nvblox:=false` to Nav2,
+  which removes the nvblox local costmap plugin from a temporary params copy. The source
+  YAML stays intact for camera runs.
+- **CUDA GLIM (`glim_gpu:=true`):** select `config_odometry_gpu.json` in a temporary config
+  copy; requires a CUDA-enabled GLIM and a patched overlay built with CUDA.
 - **rclpy scripts:** `SignalHandlerOptions.NO` plus explicit SIGINT/SIGTERM handlers, so the Nav2
   goal is cancelled on exit; after `spin_until_future_complete` times out, poll `future.done()`.
 

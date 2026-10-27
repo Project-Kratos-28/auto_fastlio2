@@ -33,6 +33,10 @@ source /opt/ros/jazzy/setup.bash
 colcon build --packages-select glim_ros --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
+For `glim_gpu:=true`, install the CUDA build of GLIM first and add
+`-DBUILD_WITH_CUDA=ON` to that `colcon build` command. The GLIM GPU package and
+the host CUDA runtime must be compatible.
+
 It builds against the apt GLIM (`libglim` headers from the koide3 PPA, the same
 ones `ros-jazzy-glim-ros` uses). Only `glim_ros` is rebuilt. For bare metal,
 set `KRATOS_GLIM_OVERLAY=$HOME/glim_ros_fix_ws/install/local_setup.bash` before

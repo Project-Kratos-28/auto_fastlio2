@@ -68,18 +68,21 @@ def glim_and_rviz(context):
     """GLIM with or without its OpenGL viewer, and RViz, depending on gui."""
     gui = gui_enabled(context)
     config = os.path.join(WS, 'glim', 'glim_config')
-    if not gui:
-        # Same config minus the desktop viewer (the JSON files have comments: edit as text).
-        headless = f'/tmp/kratos_glim_config_headless_{os.getuid()}'
-        os.makedirs(headless, exist_ok=True)
+    gpu = context.launch_configurations['glim_gpu'].lower() == 'true'
+    if not gui or gpu:
+        # Config files have comments; edit text in a private copy, keeping the repo untouched.
+        import tempfile
+        prepared = tempfile.mkdtemp(prefix='kratos_glim_config_')
         for name in os.listdir(config):
             with open(os.path.join(config, name)) as f:
                 text = f.read()
-            if name == 'config_ros.json':
+            if name == 'config_ros.json' and not gui:
                 text = '\n'.join(line for line in text.split('\n') if '"libstandard_viewer.so"' not in line)
-            with open(os.path.join(headless, name), 'w') as f:
+            if name == 'config.json' and gpu:
+                text = text.replace('config_odometry_cpu.json', 'config_odometry_gpu.json')
+            with open(os.path.join(prepared, name), 'w') as f:
                 f.write(text)
-        config = headless
+        config = prepared
     actions = [TimerAction(period=3.0, actions=[Node(
         package='glim_ros', executable='glim_rosnode', name='glim_ros', output='screen',
         parameters=[{'config_path': config}])])]
@@ -122,7 +125,8 @@ def generate_launch_description():
         share('lidar_angle_filter', 'launch', 'angle_filter.launch.py')))
     nav = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(share('kratos_nav', 'launch', 'nav.launch.py')),
-        launch_arguments={a: arg(a) for a in mount_args}.items())
+        launch_arguments={**{a: arg(a) for a in mount_args},
+                          'use_nvblox': PythonExpression(["'", arg('depth'), "' != 'none'"])}.items())
     pcd2pgm = Node(
         package='pcd2pgm', executable='pcd2pgm_node', name='pcd2pgm', output='screen',
         parameters=[share('pcd2pgm', 'config', 'pcd2pgm_live.yaml')])
@@ -148,6 +152,8 @@ def generate_launch_description():
                               description='true: also publish /glim_ros/{points,map}/compressed for the laptop'),
         DeclareLaunchArgument('cloudini_resolution', default_value='0.01',
                               description='Cloudini position resolution (m)'),
+        DeclareLaunchArgument('glim_gpu', default_value='false',
+                              description='true: use CUDA odometry (requires GPU GLIM build)'),
         DeclareLaunchArgument('lidar_x', default_value='0.0', description='MID-360 forward of base_link (m)'),
         DeclareLaunchArgument('lidar_z', default_value='0.60', description='MID-360 height above ground (m)'),
         DeclareLaunchArgument('cam_x', default_value='0.30', description='ZED forward of base_link (m), PLACEHOLDER'),

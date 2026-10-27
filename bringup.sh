@@ -37,7 +37,7 @@ set +a
 export KRATOS_WORKSPACE="$REPO"
 export KRATOS_ESS_ROOT="${KRATOS_ESS_ROOT:-$(dirname "$REPO")/kratos_nvblox/ess}"
 
-for package in kratos_bringup glim_ros livox_ros_driver2 nvblox_nav2; do
+for package in kratos_bringup glim_ros livox_ros_driver2; do
     ros2 pkg prefix "$package" >/dev/null 2>&1 || {
         echo "ROS package $package is unavailable on the host." >&2
         exit 1
@@ -55,7 +55,7 @@ if [[ " $* " == *' cloudini:=true '* ]]; then
     }
 fi
 if [[ " $* " != *' depth:=none '* ]]; then
-    for package in zed_wrapper nvblox_ros nvblox_examples_bringup; do
+    for package in zed_wrapper nvblox_ros nvblox_nav2 nvblox_examples_bringup; do
         ros2 pkg prefix "$package" >/dev/null 2>&1 || {
             echo "ROS package $package is required for camera depth on the host." >&2
             exit 1

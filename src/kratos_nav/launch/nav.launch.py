@@ -19,10 +19,13 @@ Run:  ros2 launch kratos_nav nav.launch.py
       ros2 launch kratos_nav nav.launch.py lidar_z:=0.62 cam_x:=0.35 cam_z:=0.45 cam_pitch:=0.30
 """
 import os
+import tempfile
+
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, SetLaunchConfiguration
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from nav2_common.launch import RewrittenYaml
@@ -40,6 +43,22 @@ NAV2_NODES = [
     ('nav2_velocity_smoother', 'velocity_smoother', 'velocity_smoother',
      [('cmd_vel', 'cmd_vel_nav'), ('cmd_vel_smoothed', 'cmd_vel')]),
 ]
+
+
+def maybe_disable_nvblox(context):
+    """Let LiDAR-only runs start Nav2 without the camera costmap plugin."""
+    if context.launch_configurations['use_nvblox'].lower() != 'false':
+        return []
+    with open(context.launch_configurations['params_file']) as f:
+        data = yaml.safe_load(f)
+    local = data['local_costmap']['local_costmap']['ros__parameters']
+    local['plugins'] = [name for name in local['plugins'] if name != 'nvblox_layer']
+    local.pop('nvblox_layer', None)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', prefix='kratos_nav_lidar_',
+                                     delete=False) as f:
+        yaml.safe_dump(data, f)
+        path = f.name
+    return [SetLaunchConfiguration('params_file', path)]
 
 
 def generate_launch_description():
@@ -98,6 +117,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('params_file', default_value=os.path.join(pkg, 'config', 'nav2_params.yaml')),
+        DeclareLaunchArgument('use_nvblox', default_value='true', description='false: LiDAR-only costmap'),
         DeclareLaunchArgument('lidar_x', default_value='0.0'),
         DeclareLaunchArgument('lidar_z', default_value='0.60'),
         DeclareLaunchArgument('cam_x', default_value='0.30', description='ZED forward of base_link (m), PLACEHOLDER'),
@@ -106,6 +126,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cam_pitch', default_value='0.30',
                               description='ZED downward tilt (rad, ~17 deg), PLACEHOLDER'),
         DeclareLaunchArgument('cam_yaw', default_value='0.0'),
+        OpaqueFunction(function=maybe_disable_nvblox),
         lidar_tf,
         camera_tf,
         *nav2,
