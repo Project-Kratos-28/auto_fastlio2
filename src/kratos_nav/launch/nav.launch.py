@@ -41,7 +41,8 @@ NAV2_NODES = [
     ('nav2_bt_navigator', 'bt_navigator', 'bt_navigator', []),
     ('nav2_waypoint_follower', 'waypoint_follower', 'waypoint_follower', []),
     ('nav2_velocity_smoother', 'velocity_smoother', 'velocity_smoother',
-     [('cmd_vel', 'cmd_vel_nav'), ('cmd_vel_smoothed', 'cmd_vel')]),
+     [('cmd_vel', 'cmd_vel_nav'),
+      ('cmd_vel_smoothed', LaunchConfiguration('cmd_vel_out'))]),
 ]
 
 
@@ -73,6 +74,7 @@ def generate_launch_description():
     params = RewrittenYaml(
         source_file=arg('params_file'),
         param_rewrites={
+            'use_sim_time': arg('use_sim_time'),
             'default_nav_to_pose_bt_xml': os.path.join(bt_dir, 'navigate_no_spin.xml'),
             'default_nav_through_poses_bt_xml': os.path.join(bt_dir, 'navigate_through_poses_no_spin.xml'),
             # Smac Lattice motion primitives (planner_server GridBased).
@@ -106,17 +108,19 @@ def generate_launch_description():
 
     nav2 = [
         Node(package=pkg_name, executable=exe, name=name, output='screen',
-             parameters=[params, {'use_sim_time': False}], remappings=remaps)
+             parameters=[params], remappings=remaps)
         for pkg_name, exe, name, remaps in NAV2_NODES
     ]
     lifecycle = Node(
         package='nav2_lifecycle_manager', executable='lifecycle_manager', name='lifecycle_manager_navigation',
         output='screen',
-        parameters=[{'use_sim_time': False, 'autostart': True,
+        parameters=[{'use_sim_time': arg('use_sim_time'), 'autostart': True,
                      'node_names': [name for _, _, name, _ in NAV2_NODES]}])
 
     return LaunchDescription([
         DeclareLaunchArgument('params_file', default_value=os.path.join(pkg, 'config', 'nav2_params.yaml')),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('cmd_vel_out', default_value='cmd_vel'),
         DeclareLaunchArgument('use_nvblox', default_value='true', description='false: LiDAR-only costmap'),
         DeclareLaunchArgument('lidar_x', default_value='0.0'),
         DeclareLaunchArgument('lidar_z', default_value='0.60'),
